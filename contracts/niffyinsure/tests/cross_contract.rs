@@ -277,7 +277,7 @@ fn initiate_policy_uses_cross_contract_calculator() {
 
     let env = Env::default();
     env.mock_all_auths();
-    let (policy_client, _, admin, token_addr) = setup_policy_contract(&env);
+    let (_policy_client, _, admin, _token_addr) = setup_policy_contract(&env);
     let (calc_client, calc_id, _) = setup_calculator(&env);
 
     // Set up token balance and approval for premium payment
