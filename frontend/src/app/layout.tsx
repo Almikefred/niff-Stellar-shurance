@@ -13,6 +13,8 @@ import { inter, ibmPlexMono } from "@/lib/fonts";
 import { QueryProvider } from "@/lib/query";
 import { BottomTabBar } from "@/components/nav/BottomTabBar";
 import { NetworkBanner } from "@/components/ui/network-banner";
+import { OnboardingTour } from "@/components/OnboardingTour";
+import { SessionTimeoutModal } from "@/components/SessionTimeoutModal";
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -116,9 +118,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             <WalletProvider>
               <NetworkBanner />
               {children}
-              <Suspense fallback={null}>
-                <AnalyticsPageView />
-              </Suspense>
+              <OnboardingTour />
+              <SessionTimeoutModal />
               <CookieConsentBanner />
               <NetworkMismatchModal />
               <Toaster />
