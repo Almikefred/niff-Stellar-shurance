@@ -1293,6 +1293,8 @@ pub fn set_oracle_enabled(_env: &Env, _enabled: bool) {
 }
     /// Allowlist of treasury depositors keyed by address.
     AuthorizedDepositors,
+    /// Allowlist of payout recipients that are contract addresses.
+    AllowedPayoutRecipients,
 // ── Treasury depositor allowlist ─────────────────────────────────────────────
 
 pub fn get_authorized_depositors(env: &Env) -> Map<Address, bool> {
@@ -1316,3 +1318,25 @@ pub fn is_authorized_depositor(env: &Env, depositor: &Address) -> bool {
         .unwrap_or(false)
 }
 
+// ── Payout recipient allowlist ───────────────────────────────────────────────
+
+pub fn get_allowed_payout_recipients(env: &Env) -> Map<Address, bool> {
+    env.storage()
+        .instance()
+        .get(&DataKey::AllowedPayoutRecipients)
+        .unwrap_or_else(|| Map::new(env))
+}
+
+pub fn set_allowed_payout_recipient(env: &Env, recipient: &Address, allowed: bool) {
+    let mut recipients = get_allowed_payout_recipients(env);
+    recipients.set(recipient.clone(), allowed);
+    env.storage()
+        .instance()
+        .set(&DataKey::AllowedPayoutRecipients, &recipients);
+}
+
+pub fn is_allowed_payout_recipient(env: &Env, recipient: &Address) -> bool {
+    get_allowed_payout_recipients(env)
+        .get(recipient.clone())
+        .unwrap_or(false)
+}

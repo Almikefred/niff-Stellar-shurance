@@ -194,6 +194,18 @@ pub struct PayoutTimedOut {
     pub at_ledger: u32,
 }
 
+/// Emitted when a payout recipient is a contract address and has been explicitly allowed.
+#[contractevent(topics = ["niffyinsure", "payout_recipient_warning"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PayoutRecipientWarning {
+    #[topic]
+    pub claim_id: u64,
+    #[topic]
+    pub recipient: Address,
+    pub asset: Address,
+    pub at_ledger: u32,
+}
+
 /// Emitted every time a rejection increments the policy's strike counter.
 /// Indexers should use this event to notify holders of accumulating strikes
 /// before the threshold triggers deactivation.
@@ -780,6 +792,7 @@ fn on_reject(env: &Env, claim: &Claim) {
 fn payout(env: &Env, claim: &Claim) -> Result<(), Error> {
     let policy =
         storage::get_policy(env, &claim.claimant, claim.policy_id).ok_or(Error::PolicyNotFound)?;
+    let now = env.ledger().sequence();
 
     if !storage::is_allowed_asset(env, &policy.asset) {
         return Err(Error::InvalidAsset);
@@ -814,6 +827,19 @@ fn payout(env: &Env, claim: &Claim) -> Result<(), Error> {
         .beneficiary
         .clone()
         .unwrap_or_else(|| policy.holder.clone());
+
+    if payout_to.to_string().starts_with('C') {
+        if !storage::is_allowed_payout_recipient(env, &payout_to) {
+            return Err(Error::PayoutRecipientContractNotAllowlisted);
+        }
+        PayoutRecipientWarning {
+            claim_id: claim.claim_id,
+            recipient: payout_to.clone(),
+            asset: effective_asset.clone(),
+            at_ledger: now,
+        }
+        .publish(env);
+    }
 
     // Emit override event before the transfer so indexers see the asset decision first.
     let override_active = effective_asset != policy.asset;

@@ -55,6 +55,8 @@ pub enum Error {
     RateLimitExceeded = 42,
     /// Evidence URL does not match IPFS or allowlisted gateway format.
     InvalidEvidenceUrl = 43,
+    /// Contract payout recipients must be allowlisted.
+    PayoutRecipientContractNotAllowlisted = 48,
     /// Admin `set_voting_duration_ledgers` value outside allowed [min, max] range.
     VotingDurationOutOfBounds = 49,
     /// Batch get exceeded POLICY_BATCH_GET_MAX.

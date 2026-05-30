@@ -1206,3 +1206,20 @@ struct TreasuryDeposited {
 
         Ok(())
     }
+
+    /// Read-only: whether a contract payout recipient is explicitly allowlisted.
+    pub fn is_allowed_payout_recipient(env: Env, recipient: Address) -> bool {
+        storage::is_allowed_payout_recipient(&env, &recipient)
+    }
+
+    /// Admin-only: add or remove a contract payout recipient from the allowlist.
+    pub fn set_allowed_payout_recipient(
+        env: Env,
+        recipient: Address,
+        allowed: bool,
+    ) -> Result<(), AdminError> {
+        let _admin = admin::require_admin(&env);
+        storage::bump_instance(&env);
+        storage::set_allowed_payout_recipient(&env, &recipient, allowed);
+        Ok(())
+    }
