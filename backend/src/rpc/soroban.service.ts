@@ -81,6 +81,16 @@ export interface FinalizeClaimResult {
   onChainStatus: string;
 }
 
+export interface EvidenceLimits {
+  minEvidenceCount: number;
+  maxEvidenceCount: number;
+}
+
+export interface KeeperActionResult {
+  txHash: string;
+  ledger: number;
+}
+
 interface PendingSubmission {
   transactionXdr: string;
   timestamp: number;
@@ -1226,6 +1236,132 @@ export class SorobanService implements OnModuleInit, OnModuleDestroy {
     }
 
     return { txHash, ledger, onChainStatus };
+  }
+
+  /**
+   * Read min_evidence_count and max_evidence_count from the contract via simulation.
+   */
+  async simulateGetEvidenceLimits(args: { sourceAccount: string }): Promise<EvidenceLimits> {
+    return this.trackRpc('simulate_get_evidence_limits', () =>
+      this._simulateGetEvidenceLimits(args),
+    );
+  }
+
+  private async _simulateGetEvidenceLimits(args: {
+    sourceAccount: string;
+  }): Promise<EvidenceLimits> {
+    const cid = this.contractId;
+    if (!cid) {
+      throw new BadRequestException({ code: 'CONTRACT_NOT_CONFIGURED', message: 'CONTRACT_ID is not set.' });
+    }
+    const server = this.makeServer();
+    const account = await this.loadAccount(server, args.sourceAccount);
+    const contract = new Contract(cid);
+
+    const simU32 = async (method: string): Promise<number> => {
+      const tx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: this.networkPassphrase })
+        .addOperation(contract.call(method))
+        .setTimeout(30)
+        .build();
+      const sim = await server.simulateTransaction(tx);
+      if (Api.isSimulationError(sim)) {
+        this.mapSimulationError(
+          (sim as SorobanRpc.Api.SimulateTransactionErrorResponse).error as string,
+        );
+      }
+      const retval = (sim as SorobanRpc.Api.SimulateTransactionSuccessResponse).result?.retval;
+      if (!retval) return 0;
+      const native = scValToNative(retval);
+      return typeof native === 'number' ? native : Number(native);
+    };
+
+    const [minEvidenceCount, maxEvidenceCount] = await Promise.all([
+      simU32('get_min_evidence_count'),
+      simU32('get_max_evidence_count'),
+    ]);
+    return { minEvidenceCount, maxEvidenceCount };
+  }
+
+  /**
+   * Submit a signed transaction using the keeper key and await confirmation.
+   */
+  private async submitKeeperTx(
+    operation: xdr.Operation,
+    label: string,
+  ): Promise<KeeperActionResult> {
+    const source =
+      this.configService.get<string>('CLAIM_KEEPER_SOURCE_ACCOUNT') ||
+      this.configService.get<string>('SOLVENCY_SIMULATION_SOURCE_ACCOUNT');
+    const secret = this.configService.get<string>('CLAIM_KEEPER_SECRET_KEY');
+    if (!source || !secret) {
+      throw new ServiceUnavailableException({
+        code: 'KEEPER_NOT_CONFIGURED',
+        message: 'Keeper is not configured (CLAIM_KEEPER_SOURCE_ACCOUNT / CLAIM_KEEPER_SECRET_KEY).',
+      });
+    }
+    const server = this.makeServer();
+    const account = await this.loadAccount(server, source);
+    const tx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: this.networkPassphrase })
+      .addOperation(operation)
+      .setTimeout(30)
+      .build();
+    const simulation = await server.simulateTransaction(tx);
+    if (Api.isSimulationError(simulation)) {
+      this.mapSimulationError(
+        (simulation as SorobanRpc.Api.SimulateTransactionErrorResponse).error as string,
+      );
+    }
+    const assembled = assembleTransaction(
+      tx,
+      simulation as SorobanRpc.Api.SimulateTransactionSuccessResponse,
+    ).build();
+    assembled.sign(Keypair.fromSecret(secret));
+    const sendResponse = await server.sendTransaction(assembled);
+    if (sendResponse.status === 'ERROR') {
+      throw new BadRequestException({
+        code: `${label.toUpperCase()}_REJECTED`,
+        message: `${label} transaction was rejected by the network.`,
+      });
+    }
+    const txHash = sendResponse.hash;
+    for (let i = 0; i < 30; i++) {
+      await new Promise((r) => setTimeout(r, 1_000));
+      const res = await server.getTransaction(txHash);
+      if (res.status === 'SUCCESS') return { txHash, ledger: res.ledger };
+      if (res.status === 'FAILED') {
+        throw new BadRequestException({ code: `${label.toUpperCase()}_FAILED`, message: `${label} failed on-chain.` });
+      }
+    }
+    throw new ServiceUnavailableException({
+      code: `${label.toUpperCase()}_TIMEOUT`,
+      message: `Timed out waiting for ${label} (hash=${txHash}).`,
+    });
+  }
+
+  /**
+   * Admin: set min and max evidence count on-chain (admin_set_max first, then min).
+   * Requires CLAIM_KEEPER_SECRET_KEY to be the contract admin in production.
+   */
+  async invokeAdminSetEvidenceLimits(args: { min: number; max: number }): Promise<KeeperActionResult> {
+    return this.trackRpc('invoke_admin_set_evidence_limits', () =>
+      this._invokeAdminSetEvidenceLimits(args),
+    );
+  }
+
+  private async _invokeAdminSetEvidenceLimits(args: { min: number; max: number }): Promise<KeeperActionResult> {
+    if (!this.contractId) {
+      throw new BadRequestException({ code: 'CONTRACT_NOT_CONFIGURED', message: 'CONTRACT_ID is not set.' });
+    }
+    const contract = new Contract(this.contractId);
+    // Set max first so the on-chain min <= max invariant holds during the update
+    await this.submitKeeperTx(
+      contract.call('admin_set_max_evidence_count', nativeToScVal(args.max, { type: 'u32' })),
+      'admin_set_max_evidence_count',
+    );
+    return this.submitKeeperTx(
+      contract.call('admin_set_min_evidence_count', nativeToScVal(args.min, { type: 'u32' })),
+      'admin_set_min_evidence_count',
+    );
   }
 
   /**

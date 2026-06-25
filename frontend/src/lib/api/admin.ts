@@ -73,6 +73,18 @@ export interface BulkUpdateResult {
   updated: number
 }
 
+// ── #929 Evidence limits ───────────────────────────────────────────────────
+
+export interface EvidenceLimits {
+  minEvidenceCount: number
+  maxEvidenceCount: number
+}
+
+export interface KeeperActionResult {
+  txHash: string
+  ledger: number
+}
+
 // ── API calls ──────────────────────────────────────────────────────────────
 
 export const adminApi = {
@@ -141,5 +153,19 @@ export const adminApi = {
       method: 'POST',
       headers: authHeaders(jwt),
       body: JSON.stringify({ claimIds, status, dryRun }),
+    }),
+
+  // ── #929 Evidence limits ──────────────────────────────────────────────────
+
+  getEvidenceLimits: (jwt: string) =>
+    apiFetch<EvidenceLimits>(`${base()}/governance/evidence-limits`, {
+      headers: authHeaders(jwt),
+    }),
+
+  setEvidenceLimits: (jwt: string, min: number, max: number) =>
+    apiFetch<KeeperActionResult>(`${base()}/governance/evidence-limits`, {
+      method: 'PATCH',
+      headers: authHeaders(jwt),
+      body: JSON.stringify({ min, max }),
     }),
 }
