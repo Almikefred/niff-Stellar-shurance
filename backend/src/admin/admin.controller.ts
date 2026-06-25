@@ -37,6 +37,7 @@ import { QueueMonitorService } from '../queues/queue-monitor.service';
 import { SolvencyMonitoringService } from '../maintenance/solvency-monitoring.service';
 import { AdminTenantsService } from './admin-tenants.service';
 import { AdminStatsService } from './admin-stats.service';
+import { SorobanService } from '../rpc/soroban.service';
 
 class PrivacyRequestDto {
   @IsString() subjectWalletAddress!: string;
@@ -76,6 +77,7 @@ export class AdminController {
     private readonly solvencyMonitoringService: SolvencyMonitoringService,
     private readonly tenantsService: AdminTenantsService,
     private readonly adminStatsService: AdminStatsService,
+    private readonly soroban: SorobanService,
   ) {}
 
   /**
@@ -542,5 +544,43 @@ export class AdminController {
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', 'attachment; filename="policies.csv"');
     res.send(csv);
+  }
+
+  // ── #928 Voting Duration ───────────────────────────────────────────────────
+
+  @Get('governance/voting-duration')
+  @ApiOperation({ summary: 'Read current voting_duration_ledgers from contract' })
+  async getVotingDuration() {
+    const source =
+      this.configService.get<string>('SOLVENCY_SIMULATION_SOURCE_ACCOUNT') ??
+      this.configService.get<string>('CLAIM_KEEPER_SOURCE_ACCOUNT');
+    if (!source) {
+      throw new BadRequestException({
+        code: 'SIMULATION_SOURCE_NOT_CONFIGURED',
+        message: 'Set SOLVENCY_SIMULATION_SOURCE_ACCOUNT or CLAIM_KEEPER_SOURCE_ACCOUNT',
+      });
+    }
+    return this.soroban.simulateGetVotingDuration({ sourceAccount: source });
+  }
+
+  @Patch('governance/voting-duration')
+  @ApiOperation({ summary: 'Update voting_duration_ledgers on-chain (admin)' })
+  async setVotingDuration(
+    @Body() body: { ledgers: number },
+    @Req() req: AdminRequest,
+  ) {
+    const ledgers = Number(body.ledgers);
+    if (!Number.isFinite(ledgers) || ledgers < 1 || !Number.isInteger(ledgers)) {
+      throw new BadRequestException({ code: 'INVALID_LEDGERS', message: 'ledgers must be a positive integer' });
+    }
+    const actor = req.user?.walletAddress ?? req.adminIdentity?.email ?? 'unknown';
+    const result = await this.soroban.invokeAdminSetVotingDuration({ ledgers });
+    await this.auditService.write({
+      actor,
+      action: 'admin_set_voting_duration',
+      payload: { ledgers, txHash: result.txHash },
+      ipAddress: req.ip,
+    });
+    return result;
   }
 }

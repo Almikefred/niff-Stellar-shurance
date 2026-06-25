@@ -73,6 +73,17 @@ export interface BulkUpdateResult {
   updated: number
 }
 
+// ── #928 Voting duration ───────────────────────────────────────────────────
+
+export interface VotingDuration {
+  votingDurationLedgers: number
+}
+
+export interface KeeperActionResult {
+  txHash: string
+  ledger: number
+}
+
 // ── API calls ──────────────────────────────────────────────────────────────
 
 export const adminApi = {
@@ -141,5 +152,19 @@ export const adminApi = {
       method: 'POST',
       headers: authHeaders(jwt),
       body: JSON.stringify({ claimIds, status, dryRun }),
+    }),
+
+  // ── #928 Voting duration ──────────────────────────────────────────────────
+
+  getVotingDuration: (jwt: string) =>
+    apiFetch<VotingDuration>(`${base()}/governance/voting-duration`, {
+      headers: authHeaders(jwt),
+    }),
+
+  setVotingDuration: (jwt: string, ledgers: number) =>
+    apiFetch<KeeperActionResult>(`${base()}/governance/voting-duration`, {
+      method: 'PATCH',
+      headers: authHeaders(jwt),
+      body: JSON.stringify({ ledgers }),
     }),
 }

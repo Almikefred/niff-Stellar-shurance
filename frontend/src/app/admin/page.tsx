@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Download, Loader2, RefreshCw, ShieldAlert } from 'lucide-react'
+import { Download, Loader2, RefreshCw, ShieldAlert, CheckCircle2 } from 'lucide-react'
 import Link from 'next/link'
 
 import { Button } from '@/components/ui/button'
@@ -16,7 +16,14 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { useAuth } from '@/lib/hooks/useAuth'
-import { adminApi, type AuditEntry, type FeatureFlag, type SolvencySnapshot } from '@/lib/api/admin'
+import {
+  adminApi,
+  type AuditEntry,
+  type FeatureFlag,
+  type SolvencySnapshot,
+  type VotingDuration,
+  type KeeperActionResult,
+} from '@/lib/api/admin'
 import { getConfig } from '@/config/env'
 
 // ── JWT role helper ────────────────────────────────────────────────────────
@@ -69,6 +76,7 @@ export default function AdminPage() {
         <SolvencyWidget jwt={jwt} />
         <ReindexWidget jwt={jwt} />
       </div>
+      <VotingDurationWidget jwt={jwt} />
       <FeatureFlagsWidget jwt={jwt} />
       <AuditLogWidget jwt={jwt} />
     </main>
@@ -404,6 +412,116 @@ function AuditLogWidget({ jwt }: { jwt: string }) {
             Load more
           </Button>
         )}
+      </CardContent>
+    </Card>
+  )
+}
+
+// ── #928 Voting Duration widget ────────────────────────────────────────────
+
+const LEDGER_CLOSE_SECONDS = 5
+
+function ledgersToHuman(ledgers: number): string {
+  const totalSeconds = ledgers * LEDGER_CLOSE_SECONDS
+  if (totalSeconds < 60) return `${totalSeconds}s`
+  if (totalSeconds < 3600) return `${Math.round(totalSeconds / 60)}m`
+  if (totalSeconds < 86400) return `${(totalSeconds / 3600).toFixed(1)}h`
+  return `${(totalSeconds / 86400).toFixed(1)} days`
+}
+
+function VotingDurationWidget({ jwt }: { jwt: string }) {
+  const [current, setCurrent] = useState<VotingDuration | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [input, setInput] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [result, setResult] = useState<KeeperActionResult | null>(null)
+  const [submitError, setSubmitError] = useState<string | null>(null)
+
+  useEffect(() => {
+    adminApi.getVotingDuration(jwt)
+      .then((d) => {
+        setCurrent(d)
+        setInput(String(d.votingDurationLedgers))
+      })
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : 'Failed to load'))
+      .finally(() => setLoading(false))
+  }, [jwt])
+
+  const ledgerVal = parseInt(input, 10)
+  const inputValid = Number.isFinite(ledgerVal) && ledgerVal >= 1
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!inputValid) return
+    setSubmitting(true)
+    setSubmitError(null)
+    setResult(null)
+    try {
+      const r = await adminApi.setVotingDuration(jwt, ledgerVal)
+      setResult(r)
+      setCurrent({ votingDurationLedgers: ledgerVal })
+    } catch (err: unknown) {
+      setSubmitError(err instanceof Error ? err.message : 'Failed')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Voting Duration</CardTitle>
+        <CardDescription>
+          Number of ledgers a governance vote stays open.
+          Each ledger closes in ~{LEDGER_CLOSE_SECONDS}s.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {loading && <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" aria-label="Loading" />}
+        {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
+        {current && (
+          <dl className="space-y-2 text-sm">
+            <Row label="Current ledgers" value={String(current.votingDurationLedgers)} />
+            <Row label="Approx. time" value={ledgersToHuman(current.votingDurationLedgers)} />
+          </dl>
+        )}
+        <form onSubmit={handleSubmit} className="space-y-2">
+          <div className="space-y-1">
+            <label htmlFor="voting-ledgers" className="text-sm font-medium">New value (ledgers)</label>
+            <div className="flex items-center gap-3">
+              <Input
+                id="voting-ledgers"
+                type="number"
+                min={1}
+                value={input}
+                onChange={(e) => { setInput(e.target.value); setResult(null) }}
+                aria-invalid={input !== '' && !inputValid}
+                className="h-8 w-28 text-sm"
+              />
+              {inputValid && (
+                <span className="text-xs text-muted-foreground">≈ {ledgersToHuman(ledgerVal)}</span>
+              )}
+            </div>
+          </div>
+          {submitError && <p className="text-xs text-destructive" role="alert">{submitError}</p>}
+          {result && (
+            <p className="text-xs text-green-700 flex items-center gap-1" role="status">
+              <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+              Updated — tx {result.txHash.slice(0, 12)}…
+            </p>
+          )}
+          <Button
+            type="submit"
+            size="sm"
+            disabled={submitting || !inputValid}
+            aria-busy={submitting}
+          >
+            {submitting
+              ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />Updating…</>
+              : 'Update duration'}
+          </Button>
+        </form>
       </CardContent>
     </Card>
   )
