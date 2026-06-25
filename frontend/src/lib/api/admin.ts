@@ -73,6 +73,22 @@ export interface BulkUpdateResult {
   updated: number
 }
 
+// ── #936 Reinsurance ───────────────────────────────────────────────────────
+
+export interface ReinsuranceDrawdown {
+  txHash: string
+  ledger: number
+  ledgerClosedAt: string
+  claimId: string | null
+  reinsuranceAmount: string
+  reinsuranceContract: string | null
+}
+
+export interface ReinsuranceStatus {
+  drawdowns: ReinsuranceDrawdown[]
+  totalDrawnStroops: string
+}
+
 // ── API calls ──────────────────────────────────────────────────────────────
 
 export const adminApi = {
@@ -141,5 +157,12 @@ export const adminApi = {
       method: 'POST',
       headers: authHeaders(jwt),
       body: JSON.stringify({ claimIds, status, dryRun }),
+    }),
+
+  // ── #936 Reinsurance ─────────────────────────────────────────────────────
+
+  getReinsurance: (jwt: string) =>
+    apiFetch<ReinsuranceStatus>(`${base()}/reinsurance`, {
+      headers: authHeaders(jwt),
     }),
 }

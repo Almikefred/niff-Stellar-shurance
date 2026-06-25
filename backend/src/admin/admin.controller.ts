@@ -37,6 +37,7 @@ import { QueueMonitorService } from '../queues/queue-monitor.service';
 import { SolvencyMonitoringService } from '../maintenance/solvency-monitoring.service';
 import { AdminTenantsService } from './admin-tenants.service';
 import { AdminStatsService } from './admin-stats.service';
+import { PrismaService } from '../prisma/prisma.service';
 
 class PrivacyRequestDto {
   @IsString() subjectWalletAddress!: string;
@@ -76,6 +77,7 @@ export class AdminController {
     private readonly solvencyMonitoringService: SolvencyMonitoringService,
     private readonly tenantsService: AdminTenantsService,
     private readonly adminStatsService: AdminStatsService,
+    private readonly prisma: PrismaService,
   ) {}
 
   /**
@@ -542,5 +544,42 @@ export class AdminController {
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', 'attachment; filename="policies.csv"');
     res.send(csv);
+  }
+
+  /**
+   * GET /admin/reinsurance
+   *
+   * Returns the most recent 50 ReinsuranceDrawdown events from the event indexer
+   * and the aggregate amount drawn across all recorded events.
+   * Data source: raw_events table (topic2 = 'reinsurance_drawdown').
+   */
+  @Get('reinsurance')
+  @ApiOperation({ summary: 'Reinsurance drawdown history and cumulative total' })
+  async getReinsurance() {
+    const events = await this.prisma.rawEvent.findMany({
+      where: { topic2: 'reinsurance_drawdown' },
+      orderBy: { ledger: 'desc' },
+      take: 50,
+    });
+
+    let totalDrawnStroops = BigInt(0);
+    const drawdowns = events.map((e) => {
+      const data = e.data as Record<string, unknown>;
+      const amount = BigInt(String(data['reinsurance_amount'] ?? 0));
+      totalDrawnStroops += amount;
+      return {
+        txHash: e.txHash,
+        ledger: e.ledger,
+        ledgerClosedAt: e.ledgerClosedAt,
+        claimId: data['claim_id'] != null ? String(data['claim_id']) : null,
+        reinsuranceAmount: amount.toString(),
+        reinsuranceContract:
+          data['reinsurance_contract'] != null
+            ? String(data['reinsurance_contract'])
+            : null,
+      };
+    });
+
+    return { drawdowns, totalDrawnStroops: totalDrawnStroops.toString() };
   }
 }

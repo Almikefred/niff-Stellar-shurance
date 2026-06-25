@@ -16,7 +16,13 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { useAuth } from '@/lib/hooks/useAuth'
-import { adminApi, type AuditEntry, type FeatureFlag, type SolvencySnapshot } from '@/lib/api/admin'
+import {
+  adminApi,
+  type AuditEntry,
+  type FeatureFlag,
+  type SolvencySnapshot,
+  type ReinsuranceStatus,
+} from '@/lib/api/admin'
 import { getConfig } from '@/config/env'
 
 // ── JWT role helper ────────────────────────────────────────────────────────
@@ -69,6 +75,7 @@ export default function AdminPage() {
         <SolvencyWidget jwt={jwt} />
         <ReindexWidget jwt={jwt} />
       </div>
+      <ReinsuranceWidget jwt={jwt} />
       <FeatureFlagsWidget jwt={jwt} />
       <AuditLogWidget jwt={jwt} />
     </main>
@@ -403,6 +410,88 @@ function AuditLogWidget({ jwt }: { jwt: string }) {
           >
             Load more
           </Button>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+// ── #936 Reinsurance widget ────────────────────────────────────────────────
+
+function stroopsToXlm(stroops: string): string {
+  const n = BigInt(stroops)
+  const whole = n / BigInt(10_000_000)
+  const frac = n % BigInt(10_000_000)
+  const fracStr = frac.toString().padStart(7, '0').replace(/0+$/, '') || '0'
+  return `${whole}.${fracStr} XLM`
+}
+
+function ReinsuranceWidget({ jwt }: { jwt: string }) {
+  const [status, setStatus] = useState<ReinsuranceStatus | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    adminApi.getReinsurance(jwt)
+      .then(setStatus)
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : 'Failed'))
+      .finally(() => setLoading(false))
+  }, [jwt])
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Reinsurance Pool</CardTitle>
+        <CardDescription>Secondary pool drawdown history from the event indexer.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {loading && <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" aria-label="Loading" />}
+        {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
+        {status && (
+          <>
+            <dl className="space-y-2 text-sm">
+              <Row label="Total drawn" value={stroopsToXlm(status.totalDrawnStroops)} />
+              <Row label="Drawdown events" value={String(status.drawdowns.length)} />
+            </dl>
+            <div className="overflow-x-auto rounded-md border">
+              <table className="w-full text-xs">
+                <thead className="bg-muted/50">
+                  <tr>
+                    {['Ledger', 'Date', 'Claim ID', 'Amount drawn', 'Pool contract'].map((h) => (
+                      <th key={h} className="px-3 py-2 text-left font-medium text-muted-foreground">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {status.drawdowns.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="px-3 py-6 text-center text-muted-foreground">
+                        No reinsurance drawdowns recorded.
+                      </td>
+                    </tr>
+                  )}
+                  {status.drawdowns.map((d) => (
+                    <tr key={`${d.txHash}-${d.ledger}`} className="hover:bg-muted/30">
+                      <td className="px-3 py-2 font-mono">{d.ledger}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {new Date(d.ledgerClosedAt).toLocaleDateString()}
+                      </td>
+                      <td className="px-3 py-2 font-mono">{d.claimId ?? '—'}</td>
+                      <td className="px-3 py-2 font-mono">{stroopsToXlm(d.reinsuranceAmount)}</td>
+                      <td
+                        className="px-3 py-2 font-mono truncate max-w-[10rem]"
+                        title={d.reinsuranceContract ?? ''}
+                      >
+                        {d.reinsuranceContract
+                          ? `${d.reinsuranceContract.slice(0, 8)}…`
+                          : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </CardContent>
     </Card>

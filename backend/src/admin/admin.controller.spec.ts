@@ -14,6 +14,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { SolvencyMonitoringService } from '../maintenance/solvency-monitoring.service';
 import { AdminTenantsService } from './admin-tenants.service';
 import { AdminStatsService } from './admin-stats.service';
+import { PrismaService } from '../prisma/prisma.service';
 
 const mockAdminService = {
   enqueueReindex: jest.fn(),
@@ -46,6 +47,9 @@ const mockAdminStatsService = {
 };
 const mockAdminTenantsService = {
   listTenants: jest.fn(),
+};
+const mockPrismaService = {
+  rawEvent: { findMany: jest.fn().mockResolvedValue([]) },
 };
 
 const adminReq = (role = 'admin', scopes: string[] = ['admin:claims:override']) =>
@@ -88,6 +92,7 @@ describe('AdminController', () => {
         },
         { provide: AdminStatsService, useValue: mockAdminStatsService },
         { provide: AdminTenantsService, useValue: mockAdminTenantsService },
+        { provide: PrismaService, useValue: mockPrismaService },
       ],
     })
       .overrideGuard(JwtAuthGuard)
@@ -402,6 +407,7 @@ describe('Admin Role Guard Enforcement', () => {
         },
         { provide: AdminStatsService, useValue: mockAdminStatsService },
         { provide: AdminTenantsService, useValue: mockAdminTenantsService },
+        { provide: PrismaService, useValue: mockPrismaService },
       ],
     })
       .overrideGuard(JwtAuthGuard)
