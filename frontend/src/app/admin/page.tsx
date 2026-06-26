@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Download, Loader2, RefreshCw, ShieldAlert, CheckCircle2 } from 'lucide-react'
+import { Download, Loader2, RefreshCw, ShieldAlert, Tag } from 'lucide-react'
 import Link from 'next/link'
 
 import { Button } from '@/components/ui/button'
@@ -21,10 +21,70 @@ import {
   type AuditEntry,
   type FeatureFlag,
   type SolvencySnapshot,
-  type VotingDuration,
+  type EvidenceLimits,
   type KeeperActionResult,
 } from '@/lib/api/admin'
 import { getConfig } from '@/config/env'
+import { getPrimaryContractVersion } from '@/lib/network-manifest'
+
+// ── Contract version header ────────────────────────────────────────────────
+
+/**
+ * Fetches the deployed contract semantic version via get_contract_metadata
+ * simulation from the backend, falling back to the registry's deployedVersion.
+ */
+function useContractVersion() {
+  const { apiUrl, network } = getConfig()
+  const [version, setVersion] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    // Try the backend simulation endpoint first
+    fetch(`${apiUrl}/api/contracts/metadata`, { credentials: 'include' })
+      .then(async (res) => {
+        if (!res.ok) throw new Error('metadata fetch failed')
+        const data = await res.json() as { version?: string }
+        if (data?.version) setVersion(data.version)
+        else throw new Error('no version in response')
+      })
+      .catch(() => {
+        // Fallback: read from deployment-registry.json bundled with the app
+        const v = getPrimaryContractVersion(network as 'testnet' | 'mainnet')
+        setVersion(v ?? null)
+      })
+      .finally(() => setLoading(false))
+  }, [apiUrl, network])
+
+  return { version, loading }
+}
+
+function ContractVersionBadge() {
+  const { version, loading } = useContractVersion()
+  const { network } = getConfig()
+
+  if (loading) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-md border border-muted bg-muted/50 px-2.5 py-1 text-xs text-muted-foreground animate-pulse">
+        <Tag className="h-3 w-3" aria-hidden="true" />
+        Loading…
+      </span>
+    )
+  }
+
+  if (!version) return null
+
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/40 px-2.5 py-1 text-xs font-mono font-medium text-foreground"
+      title={`Deployed contract version on ${network}`}
+      aria-label={`Contract version ${version} on ${network}`}
+    >
+      <Tag className="h-3 w-3 text-muted-foreground" aria-hidden="true" />
+      {version}
+      <span className="text-muted-foreground font-sans normal-case">·&nbsp;{network}</span>
+    </span>
+  )
+}
 
 // ── JWT role helper ────────────────────────────────────────────────────────
 
@@ -71,12 +131,15 @@ export default function AdminPage() {
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-8 space-y-8">
-      <h1 className="text-2xl font-semibold">Admin Dashboard</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-2xl font-semibold">Admin Dashboard</h1>
+        <ContractVersionBadge />
+      </div>
       <div className="grid gap-6 md:grid-cols-2">
         <SolvencyWidget jwt={jwt} />
         <ReindexWidget jwt={jwt} />
       </div>
-      <VotingDurationWidget jwt={jwt} />
+      <EvidenceLimitsWidget jwt={jwt} />
       <FeatureFlagsWidget jwt={jwt} />
       <AuditLogWidget jwt={jwt} />
     </main>
@@ -417,50 +480,45 @@ function AuditLogWidget({ jwt }: { jwt: string }) {
   )
 }
 
-// ── #928 Voting Duration widget ────────────────────────────────────────────
+// ── #929 Evidence Limits widget ────────────────────────────────────────────
 
-const LEDGER_CLOSE_SECONDS = 5
-
-function ledgersToHuman(ledgers: number): string {
-  const totalSeconds = ledgers * LEDGER_CLOSE_SECONDS
-  if (totalSeconds < 60) return `${totalSeconds}s`
-  if (totalSeconds < 3600) return `${Math.round(totalSeconds / 60)}m`
-  if (totalSeconds < 86400) return `${(totalSeconds / 3600).toFixed(1)}h`
-  return `${(totalSeconds / 86400).toFixed(1)} days`
-}
-
-function VotingDurationWidget({ jwt }: { jwt: string }) {
-  const [current, setCurrent] = useState<VotingDuration | null>(null)
+function EvidenceLimitsWidget({ jwt }: { jwt: string }) {
+  const [limits, setLimits] = useState<EvidenceLimits | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [input, setInput] = useState('')
+  const [minInput, setMinInput] = useState('')
+  const [maxInput, setMaxInput] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [result, setResult] = useState<KeeperActionResult | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
   useEffect(() => {
-    adminApi.getVotingDuration(jwt)
-      .then((d) => {
-        setCurrent(d)
-        setInput(String(d.votingDurationLedgers))
+    adminApi.getEvidenceLimits(jwt)
+      .then((l) => {
+        setLimits(l)
+        setMinInput(String(l.minEvidenceCount))
+        setMaxInput(String(l.maxEvidenceCount))
       })
       .catch((e: unknown) => setError(e instanceof Error ? e.message : 'Failed to load'))
       .finally(() => setLoading(false))
   }, [jwt])
 
-  const ledgerVal = parseInt(input, 10)
-  const inputValid = Number.isFinite(ledgerVal) && ledgerVal >= 1
+  const minVal = parseInt(minInput, 10)
+  const maxVal = parseInt(maxInput, 10)
+  const minValid = Number.isFinite(minVal) && minVal >= 0
+  const maxValid = Number.isFinite(maxVal) && maxVal > 0
+  const orderValid = minValid && maxValid && minVal <= maxVal
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!inputValid) return
+    if (!orderValid) return
     setSubmitting(true)
     setSubmitError(null)
     setResult(null)
     try {
-      const r = await adminApi.setVotingDuration(jwt, ledgerVal)
+      const r = await adminApi.setEvidenceLimits(jwt, minVal, maxVal)
       setResult(r)
-      setCurrent({ votingDurationLedgers: ledgerVal })
+      setLimits({ minEvidenceCount: minVal, maxEvidenceCount: maxVal })
     } catch (err: unknown) {
       setSubmitError(err instanceof Error ? err.message : 'Failed')
     } finally {
@@ -471,39 +529,54 @@ function VotingDurationWidget({ jwt }: { jwt: string }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Voting Duration</CardTitle>
+        <CardTitle>Evidence Limits</CardTitle>
         <CardDescription>
-          Number of ledgers a governance vote stays open.
-          Each ledger closes in ~{LEDGER_CLOSE_SECONDS}s.
+          Set the minimum and maximum number of evidence items required per claim.
+          Inline validation prevents submitting min &gt; max.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {loading && <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" aria-label="Loading" />}
         {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
-        {current && (
+        {limits && (
           <dl className="space-y-2 text-sm">
-            <Row label="Current ledgers" value={String(current.votingDurationLedgers)} />
-            <Row label="Approx. time" value={ledgersToHuman(current.votingDurationLedgers)} />
+            <Row label="Current min" value={String(limits.minEvidenceCount)} />
+            <Row label="Current max" value={String(limits.maxEvidenceCount)} />
           </dl>
         )}
-        <form onSubmit={handleSubmit} className="space-y-2">
-          <div className="space-y-1">
-            <label htmlFor="voting-ledgers" className="text-sm font-medium">New value (ledgers)</label>
-            <div className="flex items-center gap-3">
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <div className="flex gap-4 items-end">
+            <div className="space-y-1">
+              <label htmlFor="evidence-min" className="text-sm font-medium">Min</label>
               <Input
-                id="voting-ledgers"
+                id="evidence-min"
+                type="number"
+                min={0}
+                value={minInput}
+                onChange={(e) => { setMinInput(e.target.value); setResult(null) }}
+                aria-invalid={minInput !== '' && !minValid}
+                className="h-8 w-20 text-sm"
+              />
+            </div>
+            <div className="space-y-1">
+              <label htmlFor="evidence-max" className="text-sm font-medium">Max</label>
+              <Input
+                id="evidence-max"
                 type="number"
                 min={1}
-                value={input}
-                onChange={(e) => { setInput(e.target.value); setResult(null) }}
-                aria-invalid={input !== '' && !inputValid}
-                className="h-8 w-28 text-sm"
+                value={maxInput}
+                onChange={(e) => { setMaxInput(e.target.value); setResult(null) }}
+                aria-invalid={maxInput !== '' && !maxValid}
+                className="h-8 w-20 text-sm"
               />
-              {inputValid && (
-                <span className="text-xs text-muted-foreground">≈ {ledgersToHuman(ledgerVal)}</span>
-              )}
             </div>
           </div>
+          {minValid && maxValid && !orderValid && (
+            <p className="text-xs text-destructive flex items-center gap-1" role="alert">
+              <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />
+              Min must not exceed max
+            </p>
+          )}
           {submitError && <p className="text-xs text-destructive" role="alert">{submitError}</p>}
           {result && (
             <p className="text-xs text-green-700 flex items-center gap-1" role="status">
@@ -514,12 +587,12 @@ function VotingDurationWidget({ jwt }: { jwt: string }) {
           <Button
             type="submit"
             size="sm"
-            disabled={submitting || !inputValid}
+            disabled={submitting || !orderValid}
             aria-busy={submitting}
           >
             {submitting
               ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />Updating…</>
-              : 'Update duration'}
+              : 'Update limits'}
           </Button>
         </form>
       </CardContent>
