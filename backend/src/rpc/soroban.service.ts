@@ -17,6 +17,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import CircuitBreaker from 'opossum';
 import { MetricsService } from '../metrics/metrics.service';
+import { RequestIdService } from '../common/tracing/request-id.service';
 import { getNetworkConfig } from '../config/network.config';
 import { CLAIM_BATCH_GET_MAX, POLICY_BATCH_GET_MAX } from '../chain/chain.constants';
 import {
@@ -109,6 +110,7 @@ export class SorobanService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly configService: ConfigService,
     @Optional() private readonly metricsService?: MetricsService,
+    @Optional() private readonly requestIdService?: RequestIdService,
   ) {
     this.cbThreshold = this.configService.get<number>('SOROBAN_RPC_CIRCUIT_BREAKER_THRESHOLD', 5);
     this.cbResetMs = this.configService.get<number>('SOROBAN_RPC_CIRCUIT_BREAKER_RESET_MS', 60_000);
@@ -201,9 +203,16 @@ export class SorobanService implements OnModuleInit, OnModuleDestroy {
   }
 
   private makeServer(): SorobanRpc.Server {
-    return new SorobanRpc.Server(this.rpcUrl, {
+    const options: { allowHttp: boolean; headers?: Record<string, string> } = {
       allowHttp: this.rpcUrl.startsWith('http://'),
-    });
+    };
+
+    const requestId = this.requestIdService?.getRequestId();
+    if (requestId) {
+      options.headers = { 'x-request-id': requestId };
+    }
+
+    return new SorobanRpc.Server(this.rpcUrl, options as any);
   }
 
   static enumVariantToScVal(variant: string): xdr.ScVal {
@@ -247,7 +256,8 @@ export class SorobanService implements OnModuleInit, OnModuleDestroy {
             'Check STELLAR_NETWORK_PASSPHRASE and SOROBAN_RPC_URL.',
         });
       }
-      this.logger.error('RPC load account error', msg);
+      const requestId = this.requestIdService?.getRequestId();
+      this.logger.error('RPC load account error', { msg, requestId });
       throw new ServiceUnavailableException({
         code: 'RPC_UNAVAILABLE',
         message: 'Could not reach the Soroban RPC endpoint. Try again shortly.',
@@ -649,7 +659,8 @@ export class SorobanService implements OnModuleInit, OnModuleDestroy {
         }
         return response;
       } catch (err) {
-        this.logger.error('Transaction submission error', err);
+        const requestId = this.requestIdService?.getRequestId();
+        this.logger.error('Transaction submission error', { err, requestId });
         throw new ServiceUnavailableException({
           code: 'SUBMISSION_FAILED',
           message: 'Failed to submit transaction to the network.',
