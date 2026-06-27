@@ -67,11 +67,13 @@ export function PolicyInitiation({ quoteId: propQuoteId }: PolicyInitiationProps
       quoteId,
       coverageTier: 'Standard',
       walletAddress: '',
+      beneficiaryAddress: '',
       acceptTerms: false,
     }
   })
 
   const coverageTier = watch('coverageTier')
+  const beneficiaryAddress = watch('beneficiaryAddress')
 
   const steps: Step[] = [
     {
@@ -394,6 +396,25 @@ export function PolicyInitiation({ quoteId: propQuoteId }: PolicyInitiationProps
                       {errors.walletAddress.message}
                     </p>
                   )}
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="beneficiaryAddress">Beneficiary Address (Optional)</Label>
+                  <Input
+                    id="beneficiaryAddress"
+                    placeholder="G... (leave empty for payouts to holder)"
+                    {...register('beneficiaryAddress')}
+                    className={errors.beneficiaryAddress ? 'border-destructive' : ''}
+                  />
+                  {errors.beneficiaryAddress && (
+                    <p className="text-sm text-destructive flex items-center gap-1">
+                      <AlertCircle className="h-4 w-4" />
+                      {errors.beneficiaryAddress.message}
+                    </p>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    Specify an alternate address for claim payouts. Defaults to wallet holder if empty.
+                  </p>
                 </div>
 
                 <div className="space-y-2">
