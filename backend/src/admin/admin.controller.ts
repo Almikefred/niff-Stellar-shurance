@@ -28,6 +28,7 @@ import { AdminRoleGuard } from './guards/admin-role.guard';
 import { MinAdminRole } from './decorators/admin.decorator';
 import { AdminService } from './admin.service';
 import { AdminPoliciesService } from './admin-policies.service';
+import { AdminClaimsExportService } from './admin-claims-export.service';
 import { AuditService } from './audit.service';
 import { ReindexDto } from './dto/reindex.dto';
 import { BackfillDto } from './dto/backfill.dto';
@@ -111,6 +112,7 @@ export class AdminController {
   constructor(
     private readonly adminService: AdminService,
     private readonly adminPoliciesService: AdminPoliciesService,
+    private readonly adminClaimsExportService: AdminClaimsExportService,
     private readonly auditService: AuditService,
     private readonly privacyService: PrivacyService,
     private readonly rateLimitService: RateLimitService,
@@ -470,6 +472,57 @@ export class AdminController {
       { action: query.action, actor: query.actor, from: query.from, to: query.to },
       res,
     );
+  }
+
+  /**
+   * GET /admin/claims/export?status=PENDING&from=2024-01-01&to=2024-12-31
+   *
+   * Streaming CSV export of claims matching filters.
+   * Rate limited: one export per minute per admin.
+   *
+   * CSV Columns:
+   * id, policyId, creatorAddress, amount, asset, description, status, severity,
+   * isFinalized, approveVotes, rejectVotes, paidAt, createdAt, updatedAt, txHash, tenantId
+   *
+   * Query Parameters:
+   * - status: filter by claim status (PENDING, APPROVED, PAID, REJECTED)
+   * - from: ISO 8601 start date (inclusive)
+   * - to: ISO 8601 end date (inclusive)
+   */
+  @Get('claims/export')
+  @MinAdminRole('viewer')
+  @ApiOperation({ summary: 'Streaming CSV export of claims with pagination (no memory load)' })
+  async exportClaims(
+    @Query('status') status?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Req() req: AdminRequest,
+    @Res() res: Response,
+  ) {
+    const admin = req.user?.walletAddress ?? 'unknown';
+    const rateLimitKey = `admin_claims_export:${admin}`;
+
+    const isAllowed = await this.rateLimitService.checkLimit(rateLimitKey, 1, 60);
+    if (!isAllowed) {
+      throw new BadRequestException({
+        code: 'RATE_LIMIT_EXCEEDED',
+        message: 'Claims export is limited to one per minute per admin.',
+      });
+    }
+
+    await this.auditService.write({
+      actor: admin,
+      action: 'claims_export',
+      payload: { status, from, to } as Prisma.InputJsonObject,
+      ipAddress: req.ip,
+    });
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename=claims-export.csv');
+    res.setHeader('Transfer-Encoding', 'chunked');
+
+    const stream = this.adminClaimsExportService.createClaimsExportStream({ status, from, to });
+    stream.pipe(res);
   }
 
   /**
