@@ -28,6 +28,7 @@ import { MaintenanceModule } from './maintenance/maintenance.module';
 import { EventsModule } from './events/events.module';
 import { ProfileModule } from './profile/profile.module';
 import { FeedsModule } from './feeds/feeds.module';
+import { AssetsModule } from './assets/assets.module';
 import { RequestContextMiddleware } from './common/middleware/request-context.middleware';
 import { AppLoggerService } from './common/logger/app-logger.service';
 import { OracleHooksController } from './experimental/oracle-hooks.controller';
@@ -89,6 +90,7 @@ const IDEMPOTENCY_ROUTES = [
     EventsModule,
     ProfileModule,
     FeedsModule,
+    AssetsModule,
   ],
   controllers: [OracleHooksController, BetaCalculatorsController],
   providers: [
