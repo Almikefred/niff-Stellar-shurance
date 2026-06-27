@@ -16,6 +16,7 @@ import { QuoteSimulationCacheService } from '../quote/quote-simulation-cache.ser
 import { ClaimSummaryCacheService } from '../claims/services/claim-summary-cache.service';
 import { VotePubSubService } from '../graphql/vote-pubsub.service';
 import { OutboundWebhookService } from '../webhooks/outbound-webhook.service';
+import { AllowedAssetsCacheService } from '../assets/allowed-assets-cache.service';
 
 type IndexerTx = Prisma.TransactionClient;
 type SorobanEvent = SorobanRpc.Api.EventResponse;
@@ -101,6 +102,7 @@ export class IndexerService {
     @Optional() private readonly claimSummaryCache?: ClaimSummaryCacheService,
     @Optional() private readonly votePubSub?: VotePubSubService,
     @Optional() private readonly outboundWebhook?: OutboundWebhookService,
+    @Optional() private readonly allowedAssetsCache?: AllowedAssetsCacheService,
   ) {
     this.networkId = this.config.get<string>('STELLAR_NETWORK', 'testnet');
     this.gapThresholdLedgers = this.config.get<number>('INDEXER_GAP_ALERT_THRESHOLD_LEDGERS', 100);
@@ -357,6 +359,10 @@ export class IndexerService {
         await this.handleClaimProcessed(tx, dataNative, event);
       } else if (mainTopic === 'niffyins' && subTopic === 'tbl_upd') {
         await this.handlePremiumTableUpdated();
+      } else if (mainTopic === 'asset' && subTopic === 'added') {
+        await this.handleAssetAdded(tx, dataNative, event);
+      } else if (mainTopic === 'asset' && subTopic === 'removed') {
+        await this.handleAssetRemoved(tx, dataNative, event);
       }
 
       await this.advanceCursorInTx(tx, network, event.ledger);
@@ -576,5 +582,40 @@ export class IndexerService {
   private async handlePremiumTableUpdated(): Promise<void> {
     await this.quoteSimulationCache?.invalidateAll();
     this.logger.log('Quote simulation cache invalidated after tbl_upd event');
+  }
+
+  private async handleAssetAdded(tx: IndexerTx, data: EventPayload, event: SorobanEvent) {
+    const contractId = getStringValue(data.contract_id);
+    const symbol = data.symbol != null ? getStringValue(data.symbol) : null;
+    const decimals = data.decimals != null ? getNumberValue(data.decimals) : 7;
+
+    await tx.allowedAsset.upsert({
+      where: { contractId },
+      create: {
+        contractId,
+        symbol,
+        decimals,
+        isAllowed: true,
+        addedAtLedger: event.ledger,
+      },
+      update: {
+        isAllowed: true,
+        symbol,
+        decimals,
+      },
+    });
+
+    await this.allowedAssetsCache?.invalidateAll();
+  }
+
+  private async handleAssetRemoved(tx: IndexerTx, data: EventPayload, event: SorobanEvent) {
+    const contractId = getStringValue(data.contract_id);
+
+    await tx.allowedAsset.update({
+      where: { contractId },
+      data: { isAllowed: false },
+    });
+
+    await this.allowedAssetsCache?.invalidateAll();
   }
 }

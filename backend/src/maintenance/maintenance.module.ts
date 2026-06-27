@@ -3,6 +3,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { PrismaModule } from '../prisma/prisma.module';
 import { RpcModule } from '../rpc/rpc.module';
 import { IpfsModule } from '../ipfs/ipfs.module';
+import { MetricsModule } from '../metrics/metrics.module';
 import { AuditService } from '../admin/audit.service';
 import { WasmDriftService } from './wasm-drift.service';
 import { WasmDriftJob } from './wasm-drift.job';
@@ -10,11 +11,13 @@ import { PrivacyService } from './privacy.service';
 import { DataRetentionService } from './data-retention.service';
 import { SolvencyMonitoringService } from './solvency-monitoring.service';
 import { IpfsPinCheckJob } from './ipfs-pin-check.job';
+import { VacuumService } from './vacuum.service';
+import { VacuumJob } from './vacuum.job';
 import { OutboundWebhookService } from '../webhooks/outbound-webhook.service';
 
 @Module({
-  imports: [ScheduleModule.forRoot(), PrismaModule, RpcModule, IpfsModule],
-  providers: [AuditService, WasmDriftService, WasmDriftJob, PrivacyService, DataRetentionService, SolvencyMonitoringService, IpfsPinCheckJob, OutboundWebhookService],
-  exports: [PrivacyService, SolvencyMonitoringService],
+  imports: [ScheduleModule.forRoot(), PrismaModule, RpcModule, IpfsModule, MetricsModule],
+  providers: [AuditService, WasmDriftService, WasmDriftJob, PrivacyService, DataRetentionService, SolvencyMonitoringService, IpfsPinCheckJob, VacuumService, VacuumJob, OutboundWebhookService],
+  exports: [PrivacyService, SolvencyMonitoringService, VacuumService],
 })
 export class MaintenanceModule {}
