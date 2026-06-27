@@ -11,10 +11,12 @@ import { DataRetentionService } from './data-retention.service';
 import { SolvencyMonitoringService } from './solvency-monitoring.service';
 import { IpfsPinCheckJob } from './ipfs-pin-check.job';
 import { OutboundWebhookService } from '../webhooks/outbound-webhook.service';
+import { VoteReconciliationJob } from './vote-reconciliation.job';
+import { MetricsModule } from '../metrics/metrics.module';
 
 @Module({
-  imports: [ScheduleModule.forRoot(), PrismaModule, RpcModule, IpfsModule],
-  providers: [AuditService, WasmDriftService, WasmDriftJob, PrivacyService, DataRetentionService, SolvencyMonitoringService, IpfsPinCheckJob, OutboundWebhookService],
+  imports: [ScheduleModule.forRoot(), PrismaModule, RpcModule, IpfsModule, MetricsModule],
+  providers: [AuditService, WasmDriftService, WasmDriftJob, PrivacyService, DataRetentionService, SolvencyMonitoringService, IpfsPinCheckJob, OutboundWebhookService, VoteReconciliationJob],
   exports: [PrivacyService, SolvencyMonitoringService],
 })
 export class MaintenanceModule {}
