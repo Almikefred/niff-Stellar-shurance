@@ -4,6 +4,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
 import { AdminPoliciesService } from './admin-policies.service';
+import { AdminClaimsExportService } from './admin-claims-export.service';
 import { AdminTenantsService } from './admin-tenants.service';
 import { AdminStatsService } from './admin-stats.service';
 import { AdminAnalyticsService } from './admin-analytics.service';
@@ -36,7 +37,7 @@ import { SupportModule } from '../support/support.module';
     }),
   ],
   controllers: [AdminController],
-  providers: [AdminService, AdminPoliciesService, AdminTenantsService, AdminStatsService, AdminAnalyticsService, AuditService, QueueMonitorService],
+  providers: [AdminService, AdminPoliciesService, AdminClaimsExportService, AdminTenantsService, AdminStatsService, AdminAnalyticsService, AuditService, QueueMonitorService],
   exports: [AuditService, QueueMonitorService],
 })
 export class AdminModule implements NestModule {

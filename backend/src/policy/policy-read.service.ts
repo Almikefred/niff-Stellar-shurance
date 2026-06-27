@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, Policy } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { PrismaReplicaService } from '../prisma/prisma-replica.service';
 import { TenantContextService } from '../tenant/tenant-context.service';
 import { assertTenantOwnership, policyTenantWhere } from '../tenant/tenant-filter.helper';
 
@@ -58,21 +59,28 @@ function decodePolicyCursor(cursor: string): PolicyCursor {
 export class PolicyReadService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly prismaReplica: PrismaReplicaService,
     private readonly tenantCtx: TenantContextService,
   ) {}
+
+  /** Get the appropriate client for reads — replica if enabled, otherwise primary. */
+  private getReadClient() {
+    return this.prismaReplica.isEnabled() ? this.prismaReplica : this.prisma;
+  }
 
   async listPolicies(params: ListPoliciesParams): Promise<PolicyConnection> {
     const first = clampFirst(params.first);
     const tenantId = this.tenantCtx.tenantId;
     const where = this.buildListWhere(params, tenantId);
+    const readClient = this.getReadClient();
 
     const [items, total] = await Promise.all([
-      this.prisma.policy.findMany({
+      readClient.policy.findMany({
         where,
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         take: first,
       }),
-      this.prisma.policy.count({ where }),
+      readClient.policy.count({ where }),
     ]);
 
     return {
@@ -87,7 +95,8 @@ export class PolicyReadService {
 
   async getPolicyById(id: string, includeDeleted = false): Promise<Policy> {
     const tenantId = this.tenantCtx.tenantId;
-    const policy = await this.prisma.policy.findUnique({ where: { id } });
+    const readClient = this.getReadClient();
+    const policy = await readClient.policy.findUnique({ where: { id } });
     assertTenantOwnership(policy, tenantId, `Policy ${id}`);
 
     if (!policy || (!includeDeleted && policy.deletedAt)) {
@@ -100,7 +109,8 @@ export class PolicyReadService {
   async getPoliciesByIds(ids: readonly string[], includeDeleted = false): Promise<Map<string, Policy>> {
     const tenantId = this.tenantCtx.tenantId;
     const uniqueIds = [...new Set(ids)];
-    const policies = await this.prisma.policy.findMany({
+    const readClient = this.getReadClient();
+    const policies = await readClient.policy.findMany({
       where: policyTenantWhere(
         tenantId,
         {

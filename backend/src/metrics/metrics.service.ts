@@ -31,9 +31,11 @@ export class MetricsService implements OnModuleInit {
   // ── Queue / DLQ metrics ───────────────────────────────────────────────────
   readonly dlqDepth: client.Gauge<string>;
   readonly dlqJobFailed: client.Counter<string>;
+  readonly queueActiveWorkers: client.Gauge<string>;
 
   // ── Indexer / observability metrics ───────────────────────────────────────
   readonly indexerLag: client.Gauge<string>;
+  readonly indexerLedgerGap: client.Gauge<string>;
   readonly solvencyBufferStroops: client.Gauge<string>;
   readonly solvencyBufferThresholdStroops: client.Gauge<string>;
 
@@ -75,15 +77,13 @@ export class MetricsService implements OnModuleInit {
   /** Total Redis connection errors. */
   readonly redisConnectionErrors: client.Counter<string>;
 
-  // ── Database maintenance metrics ───────────────────────────────────────────
-  /** Table bloat ratio as percentage (0-100). */
-  readonly pgTableBloatRatio: client.Gauge<string>;
-  /** Total VACUUM operations by result (success/failure). */
-  readonly vacuumOperationsTotal: client.Counter<string>;
-  /** Claim notification batch events accumulated/flushed. */
-  readonly claimNotificationBatchTotal: client.Counter<string>;
-  /** Generic cache metrics. */
-  readonly cacheTotal: client.Counter<string>;
+  // ── Vote reconciliation metrics ────────────────────────────────────────────
+  /** Total vote tally mismatches detected between indexed and on-chain state. */
+  readonly voteTallyMismatches: client.Counter<string>;
+  /** Total vote reconciliation errors during checking. */
+  readonly voteReconciliationErrors: client.Counter<string>;
+  /** Total mismatches found in a single reconciliation run. */
+  readonly voteReconciliationMismatchCount: client.Counter<string>;
 
   constructor() {
     this.registry = new client.Registry();
@@ -144,12 +144,20 @@ export class MetricsService implements OnModuleInit {
       registers: [this.registry],
     });
 
+    this.queueActiveWorkers = new client.Gauge({
+      name: 'bullmq_queue_active_workers',
+      help: 'Number of active workers for a queue (jobs being processed)',
+      labelNames: ['queue'],
+      registers: [this.registry],
+    });
+
     this.indexerLag = new client.Gauge({
       name: 'indexer_lag_ledgers',
       help: 'Current indexer lag in ledger count behind the network head',
       labelNames: ['network'],
       registers: [this.registry],
     });
+    this.indexerLedgerGap = new client.Gauge({      name: 'indexer_ledger_gap',      help: 'Gap between latest chain ledger and last processed ledger',      labelNames: ['network'],      registers: [this.registry],    });
 
     this.solvencyBufferStroops = new client.Gauge({
       name: 'solvency_buffer_stroops',
@@ -252,31 +260,22 @@ export class MetricsService implements OnModuleInit {
       registers: [this.registry],
     });
 
-    this.pgTableBloatRatio = new client.Gauge({
-      name: 'pg_table_bloat_ratio',
-      help: 'PostgreSQL table bloat ratio as percentage',
-      labelNames: ['table'],
+    this.voteTallyMismatches = new client.Counter({
+      name: 'vote_tally_mismatches_total',
+      help: 'Total vote tally mismatches detected between indexed DB and on-chain state',
+      labelNames: ['claim_id'],
       registers: [this.registry],
     });
 
-    this.vacuumOperationsTotal = new client.Counter({
-      name: 'db_vacuum_operations_total',
-      help: 'Total VACUUM operations',
-      labelNames: ['table', 'result'],
+    this.voteReconciliationErrors = new client.Counter({
+      name: 'vote_reconciliation_errors_total',
+      help: 'Total errors during vote reconciliation checks',
       registers: [this.registry],
     });
 
-    this.claimNotificationBatchTotal = new client.Counter({
-      name: 'claim_notification_batch_total',
-      help: 'Claim notifications accumulated/flushed in batches',
-      labelNames: ['operation', 'wallet_address'],
-      registers: [this.registry],
-    });
-
-    this.cacheTotal = new client.Counter({
-      name: 'cache_requests_total',
-      help: 'Cache hits/misses by cache namespace',
-      labelNames: ['cache_name', 'result'],
+    this.voteReconciliationMismatchCount = new client.Counter({
+      name: 'vote_reconciliation_mismatches_total',
+      help: 'Total mismatches detected in a reconciliation run',
       registers: [this.registry],
     });
   }
@@ -360,6 +359,7 @@ export class MetricsService implements OnModuleInit {
   recordIndexerLag(opts: { network: string; lag: number }) {
     this.indexerLag.set({ network: opts.network }, opts.lag);
   }
+  recordIndexerLedgerGap(opts: { network: string; gap: number }) {    this.indexerLedgerGap.set({ network: opts.network }, opts.gap);  }
 
   recordSolvencyBuffer(opts: { tenant: string; bufferStroops: bigint }) {
     this.solvencyBufferStroops.set({ tenant: opts.tenant }, Number(opts.bufferStroops));
@@ -394,24 +394,22 @@ export class MetricsService implements OnModuleInit {
     this.indexerDuplicateEvents.inc({ event_type: opts.eventType, network: opts.network });
   }
 
-  recordTableBloat(table: string, bloatRatio: number) {
-    this.pgTableBloatRatio.set({ table }, bloatRatio);
+  recordVoteTallyMismatch(
+    claimId: number,
+    indexedApprove: number,
+    indexedReject: number,
+    onChainApprove: number,
+    onChainReject: number,
+  ) {
+    this.voteTallyMismatches.inc({ claim_id: String(claimId) });
   }
 
-  recordVacuumOperation(table: string, result: 'success' | 'failure') {
-    this.vacuumOperationsTotal.inc({ table, result });
+  recordVoteReconciliationError() {
+    this.voteReconciliationErrors.inc();
   }
 
-  recordClaimNotificationBatch(operation: 'accumulated' | 'flushed', opts?: Record<string, unknown>) {
-    const labels: Record<string, string> = { operation };
-    if (opts?.walletAddress) {
-      labels.wallet_address = String(opts.walletAddress);
-    }
-    this.claimNotificationBatchTotal.inc(labels);
-  }
-
-  recordCache(cacheName: string, result: 'hit' | 'miss') {
-    this.cacheTotal.inc({ cache_name: cacheName, result });
+  recordVoteReconciliationMismatchCount(count: number) {
+    this.voteReconciliationMismatchCount.inc({}, count);
   }
 
   async getMetrics(): Promise<string> {

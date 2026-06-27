@@ -39,6 +39,7 @@ import { DeprecationHeadersInterceptor } from './common/versioning/deprecation-h
 import { V1SunsetInterceptor } from './common/versioning/v1-sunset.interceptor';
 import { RejectUnversionedApiMiddleware } from './common/versioning/reject-unversioned-api.middleware';
 import { LastSeenInterceptor } from './common/interceptors/last-seen.interceptor';
+import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 
 /** Mutation routes that require idempotency key support (issue #363). */
 const IDEMPOTENCY_ROUTES = [
@@ -97,6 +98,10 @@ const IDEMPOTENCY_ROUTES = [
   providers: [
     RequestContextMiddleware,
     AppLoggerService,
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: TransformInterceptor,
+    },
     {
       provide: APP_INTERCEPTOR,
       useClass: DeprecationHeadersInterceptor,

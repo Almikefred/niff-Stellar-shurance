@@ -9,6 +9,8 @@ import { PolicyMetadataUriViewer } from '@/components/policies/PolicyMetadataUri
 import { useWallet } from '@/features/wallet'
 import { RenewModal } from './RenewModal'
 import { TerminateModal } from './TerminateModal'
+import { TransferPolicyModal } from './TransferPolicyModal'
+import { ClaimCooldownBanner } from './ClaimCooldownBanner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -24,6 +26,7 @@ interface PolicyDetailClientProps {
 
 const LEDGER_CLOSE_SECONDS = 5
 const RENEWAL_WINDOW_LEDGERS = (30 * 24 * 60 * 60) / LEDGER_CLOSE_SECONDS
+const DEFAULT_GRACE_PERIOD_LEDGERS = 8640 // 72 hours (3 days) at 5s per ledger
 
 function formatStroopsToXLM(stroops: string): string {
   const num = BigInt(stroops)
@@ -147,6 +150,7 @@ export function PolicyDetailClient({ initialPolicy, policyId }: PolicyDetailClie
   
   const [renewModalOpen, setRenewModalOpen] = useState(false)
   const [terminateModalOpen, setTerminateModalOpen] = useState(false)
+  const [transferModalOpen, setTransferModalOpen] = useState(false)
 
   const { data: policy = initialPolicy } = useQuery({
     queryKey: ['policy', policyId],
@@ -177,6 +181,12 @@ export function PolicyDetailClient({ initialPolicy, policyId }: PolicyDetailClie
     queryClient.invalidateQueries({ queryKey: ['policy', policyId] })
     toast({ title: 'Policy terminated', description: 'Your policy has been terminated.' })
     setTerminateModalOpen(false)
+  }
+
+  const handleTransferSuccess = () => {
+    queryClient.invalidateQueries({ queryKey: ['policy', policyId] })
+    toast({ title: 'Transfer submitted', description: 'Your policy transfer has been submitted successfully.' })
+    setTransferModalOpen(false)
   }
 
   return (
@@ -261,6 +271,13 @@ export function PolicyDetailClient({ initialPolicy, policyId }: PolicyDetailClie
 
       <ClaimCapCard policyId={policyId} />
 
+      {policy.claim_cooldown && policy.claim_cooldown.ledgers_remaining > 0 && (
+        <ClaimCooldownBanner
+          ledgersRemaining={policy.claim_cooldown.ledgers_remaining}
+          estimatedSecondsRemaining={policy.claim_cooldown.estimated_seconds_remaining}
+        />
+      )}
+
       <Card>
         <CardHeader><CardTitle className="flex items-center gap-2"><FileText className="h-5 w-5" />Linked Claims</CardTitle></CardHeader>
         <CardContent>
@@ -298,6 +315,7 @@ export function PolicyDetailClient({ initialPolicy, policyId }: PolicyDetailClie
       {isHolder && policy.is_active && (
         <div className="flex gap-3 flex-wrap">
           <Button onClick={() => setRenewModalOpen(true)} disabled={!isInRenewalWindow && !isInGracePeriod} title={!isInRenewalWindow && !isInGracePeriod ? `Renewal available in the last 30 days before expiry (${Math.max(0, ledgersRemaining - RENEWAL_WINDOW_LEDGERS)} ledgers remaining)` : undefined}>Renew Policy</Button>
+          <Button variant="outline" onClick={() => setTransferModalOpen(true)}>Transfer Policy</Button>
           <Button variant="destructive" onClick={() => setTerminateModalOpen(true)}>Terminate Policy</Button>
         </div>
       )}
@@ -306,6 +324,12 @@ export function PolicyDetailClient({ initialPolicy, policyId }: PolicyDetailClie
         <>
           {renewModalOpen && <RenewModal policy={policy} onClose={() => setRenewModalOpen(false)} onSubmitted={handleRenewSuccess} />}
           {terminateModalOpen && <TerminateModal policy={policy} onClose={() => setTerminateModalOpen(false)} onSubmitted={handleTerminateSuccess} />}
+          <TransferPolicyModal
+            policy={policy}
+            open={transferModalOpen}
+            onOpenChange={setTransferModalOpen}
+            onSuccess={handleTransferSuccess}
+          />
         </>
       )}
     </main>

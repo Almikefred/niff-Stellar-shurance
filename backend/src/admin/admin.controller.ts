@@ -28,6 +28,7 @@ import { AdminRoleGuard } from './guards/admin-role.guard';
 import { MinAdminRole } from './decorators/admin.decorator';
 import { AdminService } from './admin.service';
 import { AdminPoliciesService } from './admin-policies.service';
+import { AdminClaimsExportService } from './admin-claims-export.service';
 import { AuditService } from './audit.service';
 import { ReindexDto } from './dto/reindex.dto';
 import { BackfillDto } from './dto/backfill.dto';
@@ -43,6 +44,8 @@ import { AdminStatsService } from './admin-stats.service';
 import { AdminAnalyticsService } from './admin-analytics.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SorobanService } from '../rpc/soroban.service';
+import { TokenBlacklistService } from '../auth/token-blacklist.service';
+import { SupportService } from '../support/support.service';
 
 class BatchRegisterVotersDto {
   @IsArray()
@@ -76,6 +79,15 @@ class SetClaimSeverityDto {
   severity!: ClaimSeverity;
 }
 
+class RevokeTokenDto {
+  @IsString() jti!: string;
+  @IsInt() expiresAt!: number;
+}
+
+class AssignTicketDto {
+  @IsOptional() @IsString() assignee?: string | null;
+}
+
 type AdminRequest = Request & {
   user?: {
     walletAddress?: string;
@@ -100,6 +112,7 @@ export class AdminController {
   constructor(
     private readonly adminService: AdminService,
     private readonly adminPoliciesService: AdminPoliciesService,
+    private readonly adminClaimsExportService: AdminClaimsExportService,
     private readonly auditService: AuditService,
     private readonly privacyService: PrivacyService,
     private readonly rateLimitService: RateLimitService,
@@ -111,6 +124,8 @@ export class AdminController {
     private readonly adminAnalyticsService: AdminAnalyticsService,
     private readonly prisma: PrismaService,
     private readonly sorobanService: SorobanService,
+    private readonly tokenBlacklist: TokenBlacklistService,
+    private readonly supportService: SupportService,
   ) {}
 
   // ── Governance: Voters ────────────────────────────────────────────
@@ -460,6 +475,57 @@ export class AdminController {
   }
 
   /**
+   * GET /admin/claims/export?status=PENDING&from=2024-01-01&to=2024-12-31
+   *
+   * Streaming CSV export of claims matching filters.
+   * Rate limited: one export per minute per admin.
+   *
+   * CSV Columns:
+   * id, policyId, creatorAddress, amount, asset, description, status, severity,
+   * isFinalized, approveVotes, rejectVotes, paidAt, createdAt, updatedAt, txHash, tenantId
+   *
+   * Query Parameters:
+   * - status: filter by claim status (PENDING, APPROVED, PAID, REJECTED)
+   * - from: ISO 8601 start date (inclusive)
+   * - to: ISO 8601 end date (inclusive)
+   */
+  @Get('claims/export')
+  @MinAdminRole('viewer')
+  @ApiOperation({ summary: 'Streaming CSV export of claims with pagination (no memory load)' })
+  async exportClaims(
+    @Query('status') status?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Req() req: AdminRequest,
+    @Res() res: Response,
+  ) {
+    const admin = req.user?.walletAddress ?? 'unknown';
+    const rateLimitKey = `admin_claims_export:${admin}`;
+
+    const isAllowed = await this.rateLimitService.checkLimit(rateLimitKey, 1, 60);
+    if (!isAllowed) {
+      throw new BadRequestException({
+        code: 'RATE_LIMIT_EXCEEDED',
+        message: 'Claims export is limited to one per minute per admin.',
+      });
+    }
+
+    await this.auditService.write({
+      actor: admin,
+      action: 'claims_export',
+      payload: { status, from, to } as Prisma.InputJsonObject,
+      ipAddress: req.ip,
+    });
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename=claims-export.csv');
+    res.setHeader('Transfer-Encoding', 'chunked');
+
+    const stream = this.adminClaimsExportService.createClaimsExportStream({ status, from, to });
+    stream.pipe(res);
+  }
+
+  /**
    * GET /admin/policies
    *
    * Indexed policies. Omit soft-deleted rows unless `include_deleted=true`.
@@ -761,6 +827,20 @@ export class AdminController {
   }
 
   /**
+   * GET /admin/analytics/policies
+   *
+   * Aggregated policy statistics by policyType, region, coverageAmount bucket,
+   * and isActive. Response is cached in Redis with a 5-minute TTL.
+   */
+  @Get('analytics/policies')
+  @MinAdminRole('viewer')
+  @ApiOperation({ summary: 'Policy analytics grouped by type, region, and coverage (5-min cache)' })
+  async getPolicyAnalytics(@Req() req: AdminRequest) {
+    const tenantId = req.user?.scope ?? (req.adminIdentity?.scopes?.[0] ?? undefined);
+    return this.adminAnalyticsService.getPolicyAnalytics(tenantId);
+  }
+
+  /**
    * GET /admin/claims/search
    *
    * Search claims with full-text search and filtering.
@@ -925,5 +1005,69 @@ export class AdminController {
       ipAddress: req.ip,
     });
     return result;
+  }
+
+  // ── Auth: Token Management ─────────────────────────────────────────
+
+  /**
+   * POST /admin/auth/revoke
+   *
+   * Revoke a JWT token immediately by adding to Redis blacklist.
+   * Token remains blacklisted until its expiry time.
+   */
+  @Post('auth/revoke')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Revoke a JWT token' })
+  async revokeToken(@Body() dto: RevokeTokenDto, @Req() req: AdminRequest) {
+    if (!dto.jti || dto.jti.length === 0) {
+      throw new BadRequestException('jti must be a non-empty string');
+    }
+    if (!Number.isInteger(dto.expiresAt) || dto.expiresAt <= 0) {
+      throw new BadRequestException('expiresAt must be a positive integer (Unix timestamp)');
+    }
+
+    await this.tokenBlacklist.revokeToken(dto.jti, dto.expiresAt);
+
+    const actor = req.adminIdentity?.staffId || req.adminIdentity?.email || 'unknown';
+    await this.auditService.write({
+      actor,
+      action: 'auth_token_revoke',
+      payload: { jti: dto.jti },
+      ipAddress: req.ip,
+    });
+  }
+
+  // ── Support: Ticket Management ─────────────────────────────────────
+
+  /**
+   * GET /admin/support/tickets
+   *
+   * List all support tickets with optional filtering.
+   */
+  @Get('support/tickets')
+  @MinAdminRole('viewer')
+  @ApiOperation({ summary: 'List support tickets' })
+  async listSupportTickets(
+    @Query('limit', new ParseIntPipe({ optional: true })) limit?: number,
+    @Query('offset', new ParseIntPipe({ optional: true })) offset?: number,
+    @Query('assignedTo') assignedTo?: string,
+  ) {
+    return this.supportService.listTickets(limit || 50, offset || 0, assignedTo);
+  }
+
+  /**
+   * PATCH /admin/support/tickets/:id/assign
+   *
+   * Assign a support ticket to a staff member or unassign it.
+   */
+  @Patch('support/tickets/:id/assign')
+  @ApiOperation({ summary: 'Assign support ticket to staff member' })
+  async assignSupportTicket(
+    @Param('id') ticketId: string,
+    @Body() dto: AssignTicketDto,
+    @Req() req: AdminRequest,
+  ) {
+    const actor = req.adminIdentity?.staffId || req.adminIdentity?.email || 'unknown';
+    return this.supportService.assignTicket(ticketId, dto.assignee ?? null, actor, req.ip);
   }
 }
