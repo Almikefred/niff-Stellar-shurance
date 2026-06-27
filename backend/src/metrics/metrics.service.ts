@@ -76,6 +76,14 @@ export class MetricsService implements OnModuleInit {
   /** Total Redis connection errors. */
   readonly redisConnectionErrors: client.Counter<string>;
 
+  // ── Vote reconciliation metrics ────────────────────────────────────────────
+  /** Total vote tally mismatches detected between indexed and on-chain state. */
+  readonly voteTallyMismatches: client.Counter<string>;
+  /** Total vote reconciliation errors during checking. */
+  readonly voteReconciliationErrors: client.Counter<string>;
+  /** Total mismatches found in a single reconciliation run. */
+  readonly voteReconciliationMismatchCount: client.Counter<string>;
+
   constructor() {
     this.registry = new client.Registry();
     this.registry.setDefaultLabels({ app: 'niffyinsure-api' });
@@ -249,6 +257,25 @@ export class MetricsService implements OnModuleInit {
       help: 'Total Redis connection errors',
       registers: [this.registry],
     });
+
+    this.voteTallyMismatches = new client.Counter({
+      name: 'vote_tally_mismatches_total',
+      help: 'Total vote tally mismatches detected between indexed DB and on-chain state',
+      labelNames: ['claim_id'],
+      registers: [this.registry],
+    });
+
+    this.voteReconciliationErrors = new client.Counter({
+      name: 'vote_reconciliation_errors_total',
+      help: 'Total errors during vote reconciliation checks',
+      registers: [this.registry],
+    });
+
+    this.voteReconciliationMismatchCount = new client.Counter({
+      name: 'vote_reconciliation_mismatches_total',
+      help: 'Total mismatches detected in a reconciliation run',
+      registers: [this.registry],
+    });
   }
 
   onModuleInit() {
@@ -364,8 +391,22 @@ export class MetricsService implements OnModuleInit {
     this.indexerDuplicateEvents.inc({ event_type: opts.eventType, network: opts.network });
   }
 
-  recordQueueActiveWorkers(opts: { queue: string; count: number }) {
-    this.queueActiveWorkers.set({ queue: opts.queue }, opts.count);
+  recordVoteTallyMismatch(
+    claimId: number,
+    indexedApprove: number,
+    indexedReject: number,
+    onChainApprove: number,
+    onChainReject: number,
+  ) {
+    this.voteTallyMismatches.inc({ claim_id: String(claimId) });
+  }
+
+  recordVoteReconciliationError() {
+    this.voteReconciliationErrors.inc();
+  }
+
+  recordVoteReconciliationMismatchCount(count: number) {
+    this.voteReconciliationMismatchCount.inc({}, count);
   }
 
   async getMetrics(): Promise<string> {
