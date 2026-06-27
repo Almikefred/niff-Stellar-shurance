@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { SorobanService } from '../rpc/soroban.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { PrismaReplicaService } from '../prisma/prisma-replica.service';
 import { RedisService } from '../cache/redis.service';
 import { TenantContextService } from '../tenant/tenant-context.service';
 import { claimTenantWhere, assertTenantOwnership } from '../tenant/tenant-filter.helper';
@@ -34,6 +35,7 @@ export class ClaimsService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly prismaReplica: PrismaReplicaService,
     private readonly redis: RedisService,
     private readonly claimViewMapper: ClaimViewMapper,
     private readonly config: ConfigService,
@@ -45,6 +47,11 @@ export class ClaimsService {
   ) {
     this.cacheTtl = this.config.get<number>('CACHE_TTL_SECONDS', 60);
     this.indexerNetwork = this.config.get<string>('STELLAR_NETWORK', 'testnet');
+  }
+
+  /** Get the appropriate client for reads — replica if enabled, otherwise primary. */
+  private getReadClient() {
+    return this.prismaReplica.isEnabled() ? this.prismaReplica : this.prisma;
   }
 
   async listClaims(params: ListClaimsParams): Promise<ClaimsListResponseDto> {
@@ -66,8 +73,9 @@ export class ClaimsService {
         ...(keysetWhere ?? {}),
       });
 
+      const readClient = this.getReadClient();
       const [claims, total] = await Promise.all([
-        this.prisma.claim.findMany({
+        readClient.claim.findMany({
           where,
           include: {
             votes: { where: { deletedAt: null }, select: { vote: true } },
@@ -76,7 +84,7 @@ export class ClaimsService {
           orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
           take: limit,
         }),
-        this.prisma.claim.count({ where: claimTenantWhere(tenantId, statusFilter) }),
+        readClient.claim.count({ where: claimTenantWhere(tenantId, statusFilter) }),
       ]);
 
       return {
@@ -107,7 +115,8 @@ export class ClaimsService {
     const tenantId = this.tenantCtx.tenantId;
     const lastLedger = await this.getLastLedger();
 
-    const votedClaimIds = await this.prisma.vote.findMany({
+    const readClient = this.getReadClient();
+    const votedClaimIds = await readClient.vote.findMany({
       where: { voterAddress: walletAddress.toLowerCase(), deletedAt: null },
       select: { claimId: true },
     });
@@ -120,8 +129,8 @@ export class ClaimsService {
     });
 
     const [allOpen, page] = await Promise.all([
-      this.prisma.claim.count({ where: baseWhere }),
-      this.prisma.claim.findMany({
+      readClient.claim.count({ where: baseWhere }),
+      readClient.claim.findMany({
         where: { ...baseWhere, ...(keysetWhere ?? {}) },
         include: {
           votes: { where: { deletedAt: null }, select: { vote: true } },
@@ -165,7 +174,8 @@ export class ClaimsService {
     }
 
     const lastLedger = await this.getLastLedger();
-    const claim = await this.prisma.claim.findFirst({
+    const readClient = this.getReadClient();
+    const claim = await readClient.claim.findFirst({
       where: claimTenantWhere(tenantId, { id }),
       include: {
         votes: {
@@ -217,7 +227,8 @@ export class ClaimsService {
     }
 
     const lastLedger = await this.getLastLedger();
-    const claims = await this.prisma.claim.findMany({
+    const readClient = this.getReadClient();
+    const claims = await readClient.claim.findMany({
       where: claimTenantWhere(tenantId, {
         policyId: { in: uniquePolicyIds },
       }),
