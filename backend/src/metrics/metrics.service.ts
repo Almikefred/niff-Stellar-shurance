@@ -75,6 +75,16 @@ export class MetricsService implements OnModuleInit {
   /** Total Redis connection errors. */
   readonly redisConnectionErrors: client.Counter<string>;
 
+  // ── Database maintenance metrics ───────────────────────────────────────────
+  /** Table bloat ratio as percentage (0-100). */
+  readonly pgTableBloatRatio: client.Gauge<string>;
+  /** Total VACUUM operations by result (success/failure). */
+  readonly vacuumOperationsTotal: client.Counter<string>;
+  /** Claim notification batch events accumulated/flushed. */
+  readonly claimNotificationBatchTotal: client.Counter<string>;
+  /** Generic cache metrics. */
+  readonly cacheTotal: client.Counter<string>;
+
   constructor() {
     this.registry = new client.Registry();
     this.registry.setDefaultLabels({ app: 'niffyinsure-api' });
@@ -241,6 +251,34 @@ export class MetricsService implements OnModuleInit {
       help: 'Total Redis connection errors',
       registers: [this.registry],
     });
+
+    this.pgTableBloatRatio = new client.Gauge({
+      name: 'pg_table_bloat_ratio',
+      help: 'PostgreSQL table bloat ratio as percentage',
+      labelNames: ['table'],
+      registers: [this.registry],
+    });
+
+    this.vacuumOperationsTotal = new client.Counter({
+      name: 'db_vacuum_operations_total',
+      help: 'Total VACUUM operations',
+      labelNames: ['table', 'result'],
+      registers: [this.registry],
+    });
+
+    this.claimNotificationBatchTotal = new client.Counter({
+      name: 'claim_notification_batch_total',
+      help: 'Claim notifications accumulated/flushed in batches',
+      labelNames: ['operation', 'wallet_address'],
+      registers: [this.registry],
+    });
+
+    this.cacheTotal = new client.Counter({
+      name: 'cache_requests_total',
+      help: 'Cache hits/misses by cache namespace',
+      labelNames: ['cache_name', 'result'],
+      registers: [this.registry],
+    });
   }
 
   onModuleInit() {
@@ -354,6 +392,26 @@ export class MetricsService implements OnModuleInit {
 
   recordDuplicateEvent(opts: { eventType: 'raw_event' | 'vote'; network: string }) {
     this.indexerDuplicateEvents.inc({ event_type: opts.eventType, network: opts.network });
+  }
+
+  recordTableBloat(table: string, bloatRatio: number) {
+    this.pgTableBloatRatio.set({ table }, bloatRatio);
+  }
+
+  recordVacuumOperation(table: string, result: 'success' | 'failure') {
+    this.vacuumOperationsTotal.inc({ table, result });
+  }
+
+  recordClaimNotificationBatch(operation: 'accumulated' | 'flushed', opts?: Record<string, unknown>) {
+    const labels: Record<string, string> = { operation };
+    if (opts?.walletAddress) {
+      labels.wallet_address = String(opts.walletAddress);
+    }
+    this.claimNotificationBatchTotal.inc(labels);
+  }
+
+  recordCache(cacheName: string, result: 'hit' | 'miss') {
+    this.cacheTotal.inc({ cache_name: cacheName, result });
   }
 
   async getMetrics(): Promise<string> {
