@@ -1,12 +1,21 @@
 'use client'
 
-import { CheckCircle, XCircle, ExternalLink, AlertTriangle } from 'lucide-react'
+import { CheckCircle, XCircle, ExternalLink, AlertTriangle, AlertCircle } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useToast } from '@/components/ui/use-toast'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { useWallet } from '@/features/wallet'
 import { useLatestLedger } from '@/hooks/use-latest-ledger'
 import {
@@ -21,6 +30,9 @@ import {
   simulateAppeal,
   submitAppeal,
   getAppealErrorMessage,
+  simulateWithdrawal,
+  submitWithdrawal,
+  getWithdrawalErrorMessage,
 } from '@/lib/api/vote'
 import {
   Claim,
@@ -44,6 +56,7 @@ interface ClaimVotePanelProps {
 
 type SubmitState = 'idle' | 'simulating' | 'confirming' | 'signing' | 'submitting' | 'done'
 type AppealState = 'idle' | 'confirming' | 'signing' | 'submitting' | 'done'
+type WithdrawalState = 'idle' | 'confirming' | 'signing' | 'submitting' | 'done'
 
 const POLL_INTERVAL_MS = 8_000
 
@@ -69,6 +82,11 @@ export function ClaimVotePanel({ claimId }: ClaimVotePanelProps) {
   const [appealSubmitted, setAppealSubmitted] = useState(false)
   const [appealTxHash, setAppealTxHash] = useState<string | null>(null)
   const [appealError, setAppealError] = useState<string | null>(null)
+
+  // Withdrawal state
+  const [withdrawalState, setWithdrawalState] = useState<WithdrawalState>('idle')
+  const [withdrawalTxHash, setWithdrawalTxHash] = useState<string | null>(null)
+  const [withdrawalError, setWithdrawalError] = useState<string | null>(null)
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -243,6 +261,58 @@ export function ClaimVotePanel({ claimId }: ClaimVotePanelProps) {
 
   const handleAppealCancel = useCallback(() => {
     setAppealState('idle')
+  }, [])
+
+  // ── Withdrawal flow ─────────────────────────────────────────────────────────
+  const handleWithdrawalClick = useCallback(async () => {
+    if (!walletAddress) return
+    setWithdrawalError(null)
+    setWithdrawalState('confirming')
+
+    const simErr = await simulateWithdrawal(claimId, walletAddress)
+    if (simErr) {
+      setWithdrawalError(simErr)
+      setWithdrawalState('idle')
+      return
+    }
+
+    setWithdrawalState('confirming')
+  }, [claimId, walletAddress])
+
+  const handleWithdrawalConfirm = useCallback(async () => {
+    if (!walletAddress) return
+    setWithdrawalState('signing')
+
+    try {
+      const signedXdr = await signTransaction(`withdraw:${claimId}`)
+
+      setWithdrawalState('submitting')
+      const result = await submitWithdrawal(claimId, walletAddress, signedXdr)
+
+      setWithdrawalTxHash(result.transactionHash)
+      setWithdrawalState('done')
+
+      await loadClaim()
+
+      toast({
+        title: 'Claim withdrawn',
+        description: 'Your claim has been successfully withdrawn.',
+      })
+    } catch (e) {
+      const msg =
+        e instanceof VoteAPIError
+          ? getWithdrawalErrorMessage(e)
+          : e instanceof Error
+            ? e.message
+            : 'Withdrawal submission failed'
+      setWithdrawalError(msg)
+      toast({ title: 'Withdrawal failed', description: msg, variant: 'destructive' })
+      setWithdrawalState('idle')
+    }
+  }, [claimId, walletAddress, signTransaction, toast, loadClaim])
+
+  const handleWithdrawalCancel = useCallback(() => {
+    setWithdrawalState('idle')
   }, [])
 
   // ── Derived state ───────────────────────────────────────────────────────────
@@ -444,6 +514,27 @@ export function ClaimVotePanel({ claimId }: ClaimVotePanelProps) {
         </div>
       )}
 
+      {/* Cancel claim button — only when Processing and no votes cast */}
+      {claim.status === 'Processing' && claim.approve_votes === 0 && claim.reject_votes === 0 && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-4">
+          <p className="text-sm font-medium text-amber-900 mb-3">
+            You can withdraw this claim before voting begins.
+          </p>
+          <Button
+            variant="destructive"
+            className="w-full"
+            onClick={handleWithdrawalClick}
+            disabled={withdrawalState !== 'idle' || !walletAddress}
+            aria-label="Cancel and withdraw this claim"
+          >
+            Cancel Claim
+          </Button>
+          {withdrawalError && (
+            <p className="text-xs text-amber-900 mt-2">{withdrawalError}</p>
+          )}
+        </div>
+      )}
+
       {/* Vote actions — sticky bar at bottom on mobile, inline on larger screens */}
       {!terminal && (
         <div
@@ -529,6 +620,70 @@ export function ClaimVotePanel({ claimId }: ClaimVotePanelProps) {
         onConfirm={handleAppealConfirm}
         onCancel={handleAppealCancel}
       />
+
+      {/* Withdrawal confirmation dialog */}
+      <AlertDialog open={withdrawalState === 'confirming'}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <AlertCircle className="h-5 w-5 text-amber-600" aria-hidden="true" />
+              Cancel Claim
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-3">
+              <p>
+                Are you sure you want to withdraw this claim? Once withdrawn, you cannot resubmit it.
+              </p>
+              <p className="text-sm font-medium text-foreground">
+                Claim ID: {claimId}
+              </p>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="flex gap-3">
+            <AlertDialogCancel
+              onClick={handleWithdrawalCancel}
+              disabled={withdrawalState === 'signing' || withdrawalState === 'submitting'}
+            >
+              Keep Claim
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleWithdrawalConfirm}
+              disabled={withdrawalState === 'signing' || withdrawalState === 'submitting'}
+              className="bg-destructive hover:bg-destructive/90"
+            >
+              {withdrawalState === 'signing' || withdrawalState === 'submitting' ? (
+                <>
+                  <span className="animate-spin mr-2">⏳</span>
+                  Processing…
+                </>
+              ) : (
+                'Withdraw Claim'
+              )}
+            </AlertDialogAction>
+          </div>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Post-withdrawal tx link */}
+      {withdrawalState === 'done' && withdrawalTxHash && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="flex items-center gap-2 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800"
+        >
+          <CheckCircle className="h-4 w-4 shrink-0" aria-hidden="true" />
+          <span>Claim withdrawn successfully.</span>
+          <a
+            href={explorerUrl(withdrawalTxHash)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="ml-auto flex items-center gap-1 underline underline-offset-2"
+            aria-label="View transaction on Stellar Explorer (opens in new tab)"
+          >
+            View on Explorer
+            <ExternalLink className="h-3 w-3" aria-hidden="true" />
+          </a>
+        </div>
+      )}
     </div>
   )
 }
