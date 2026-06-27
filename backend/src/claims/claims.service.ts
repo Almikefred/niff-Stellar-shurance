@@ -71,6 +71,7 @@ export class ClaimsService {
           where,
           include: {
             votes: { where: { deletedAt: null }, select: { vote: true } },
+            evidenceMetadata: true,
           },
           orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
           take: limit,
@@ -124,6 +125,7 @@ export class ClaimsService {
         where: { ...baseWhere, ...(keysetWhere ?? {}) },
         include: {
           votes: { where: { deletedAt: null }, select: { vote: true } },
+          evidenceMetadata: true,
         },
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         take: limit,
@@ -170,6 +172,7 @@ export class ClaimsService {
           where: { deletedAt: null },
           select: { vote: true },
         },
+        evidenceMetadata: true,
       },
     });
 
@@ -223,6 +226,7 @@ export class ClaimsService {
           where: { deletedAt: null },
           select: { vote: true },
         },
+        evidenceMetadata: true,
       },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     });
@@ -301,6 +305,45 @@ export class ClaimsService {
     }
     await this.redis.delPattern('claims:list:*');
     this.logger.log(`Cache invalidated for claim ${claimId || 'all'}`);
+  }
+
+  /**
+   * Store evidence metadata for a claim
+   */
+  async storeEvidenceMetadata(
+    claimId: number,
+    metadata: { cid?: string; url?: string; fileSizeBytes?: number; mimeType?: string }
+  ): Promise<void> {
+    const tenantId = this.tenantCtx.tenantId;
+
+    // Verify claim exists and belongs to tenant
+    const claim = await this.prisma.claim.findFirst({
+      where: claimTenantWhere(tenantId, { id: claimId }),
+      select: { id: true },
+    });
+
+    if (!claim) {
+      throw new NotFoundException(`Claim with ID ${claimId} not found`);
+    }
+
+    await this.prisma.evidenceMetadata.upsert({
+      where: { claimId },
+      create: {
+        claimId,
+        cid: metadata.cid,
+        url: metadata.url,
+        fileSizeBytes: metadata.fileSizeBytes,
+        mimeType: metadata.mimeType,
+      },
+      update: {
+        cid: metadata.cid,
+        url: metadata.url,
+        fileSizeBytes: metadata.fileSizeBytes,
+        mimeType: metadata.mimeType,
+      },
+    });
+
+    await this.invalidateCache(claimId);
   }
 
   /**

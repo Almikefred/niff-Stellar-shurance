@@ -216,6 +216,24 @@ export class SanitizedEvidenceDto {
   @IsString()
   @Matches(/^https?:\/\/.+/i)
   cachedUrl?: string;
+
+  @ApiPropertyOptional({ description: 'IPFS Content Identifier (CID)' })
+  @Expose()
+  @IsOptional()
+  @IsString()
+  cid?: string | null;
+
+  @ApiPropertyOptional({ description: 'File size in bytes' })
+  @Expose()
+  @IsOptional()
+  @IsNumber()
+  fileSizeBytes?: number | null;
+
+  @ApiPropertyOptional({ description: 'MIME type of the evidence file' })
+  @Expose()
+  @IsOptional()
+  @IsString()
+  mimeType?: string | null;
 }
 
 export class ConsistencyMetadataDto {
