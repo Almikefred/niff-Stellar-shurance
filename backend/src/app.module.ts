@@ -33,6 +33,7 @@ import { RequestContextMiddleware } from './common/middleware/request-context.mi
 import { AppLoggerService } from './common/logger/app-logger.service';
 import { OracleHooksController } from './experimental/oracle-hooks.controller';
 import { BetaCalculatorsController } from './experimental/beta-calculators.controller';
+import { XdrDecodeController } from './experimental/xdr-decode.controller';
 import { IdempotencyMiddleware } from './common/middleware/idempotency.middleware';
 import { DeprecationHeadersInterceptor } from './common/versioning/deprecation-headers.interceptor';
 import { V1SunsetInterceptor } from './common/versioning/v1-sunset.interceptor';
@@ -92,7 +93,7 @@ const IDEMPOTENCY_ROUTES = [
     FeedsModule,
     AssetsModule,
   ],
-  controllers: [OracleHooksController, BetaCalculatorsController],
+  controllers: [OracleHooksController, BetaCalculatorsController, XdrDecodeController],
   providers: [
     RequestContextMiddleware,
     AppLoggerService,
