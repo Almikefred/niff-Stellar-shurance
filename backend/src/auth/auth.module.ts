@@ -8,7 +8,7 @@ import { NonceService } from './nonce.service';
 import { RefreshTokenService } from './refresh-token.service';
 import { AuthController } from './auth.controller';
 import { AuthIdentityService } from './auth-identity.service';
-import { WalletSignatureService } from './wallet-signature.service';
+import { TokenBlacklistService } from './token-blacklist.service';
 import { CacheModule } from '../cache/cache.module';
 
 @Module({
@@ -25,7 +25,7 @@ import { CacheModule } from '../cache/cache.module';
     }),
   ],
   controllers: [AuthController],
-  providers: [JwtStrategy, WalletAuthService, NonceService, RefreshTokenService, AuthIdentityService, WalletSignatureService],
-  exports: [PassportModule, JwtModule, AuthIdentityService, WalletSignatureService],
+  providers: [JwtStrategy, WalletAuthService, NonceService, RefreshTokenService, AuthIdentityService, TokenBlacklistService],
+  exports: [PassportModule, JwtModule, AuthIdentityService, TokenBlacklistService],
 })
 export class AuthModule {}

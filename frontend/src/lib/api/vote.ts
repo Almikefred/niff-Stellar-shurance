@@ -182,3 +182,64 @@ export const APPEAL_ERROR_MESSAGES: Record<string, string> = {
 export function getAppealErrorMessage(error: VoteAPIError): string {
   return APPEAL_ERROR_MESSAGES[error.code] ?? error.message
 }
+
+// ── Claim withdrawal API ────────────────────────────────────────────────────────
+
+export interface WithdrawalResponse {
+  transactionHash: string;
+  status: string;
+}
+
+/**
+ * Simulate the withdrawal transaction server-side before opening the wallet popup.
+ * Returns null if simulation passes, or an error message string if it fails.
+ */
+export async function simulateWithdrawal(
+  claimId: string,
+  walletAddress: string,
+): Promise<string | null> {
+  try {
+    const res = await fetch(`${API_BASE}/api/claims/${claimId}/withdraw/simulate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ walletAddress }),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: 'Simulation failed' }))
+      return err.message ?? 'Withdrawal simulation failed'
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Submit a claim withdrawal (cancellation) before voting begins.
+ */
+export async function submitWithdrawal(
+  claimId: string,
+  walletAddress: string,
+  signedXdr: string,
+): Promise<WithdrawalResponse> {
+  const res = await fetch(`${API_BASE}/api/claims/${claimId}/withdraw`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ walletAddress, signedXdr }),
+  })
+  const data = await handleResponse<WithdrawalResponse>(res)
+  return data
+}
+
+export const WITHDRAWAL_ERROR_MESSAGES: Record<string, string> = {
+  NOT_CLAIMANT: 'Only the claimant can withdraw this claim.',
+  CLAIM_NOT_PROCESSING: 'Only claims in Processing status can be withdrawn.',
+  VOTES_ALREADY_CAST: 'Cannot withdraw a claim after voting has begun.',
+  CLAIM_NOT_FOUND: 'Claim not found.',
+  CLAIMS_PAUSED: 'Claim operations are currently paused by the contract admin.',
+  REQUEST_FAILED: 'Request failed. Please try again.',
+}
+
+export function getWithdrawalErrorMessage(error: VoteAPIError): string {
+  return WITHDRAWAL_ERROR_MESSAGES[error.code] ?? error.message
+}

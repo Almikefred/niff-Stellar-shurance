@@ -44,6 +44,8 @@ import { AdminStatsService } from './admin-stats.service';
 import { AdminAnalyticsService } from './admin-analytics.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SorobanService } from '../rpc/soroban.service';
+import { TokenBlacklistService } from '../auth/token-blacklist.service';
+import { SupportService } from '../support/support.service';
 
 class BatchRegisterVotersDto {
   @IsArray()
@@ -75,6 +77,15 @@ class PrivacyRequestDto {
 class SetClaimSeverityDto {
   @IsIn(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'])
   severity!: ClaimSeverity;
+}
+
+class RevokeTokenDto {
+  @IsString() jti!: string;
+  @IsInt() expiresAt!: number;
+}
+
+class AssignTicketDto {
+  @IsOptional() @IsString() assignee?: string | null;
 }
 
 type AdminRequest = Request & {
@@ -113,6 +124,8 @@ export class AdminController {
     private readonly adminAnalyticsService: AdminAnalyticsService,
     private readonly prisma: PrismaService,
     private readonly sorobanService: SorobanService,
+    private readonly tokenBlacklist: TokenBlacklistService,
+    private readonly supportService: SupportService,
   ) {}
 
   // ── Governance: Voters ────────────────────────────────────────────
@@ -814,6 +827,20 @@ export class AdminController {
   }
 
   /**
+   * GET /admin/analytics/policies
+   *
+   * Aggregated policy statistics by policyType, region, coverageAmount bucket,
+   * and isActive. Response is cached in Redis with a 5-minute TTL.
+   */
+  @Get('analytics/policies')
+  @MinAdminRole('viewer')
+  @ApiOperation({ summary: 'Policy analytics grouped by type, region, and coverage (5-min cache)' })
+  async getPolicyAnalytics(@Req() req: AdminRequest) {
+    const tenantId = req.user?.scope ?? (req.adminIdentity?.scopes?.[0] ?? undefined);
+    return this.adminAnalyticsService.getPolicyAnalytics(tenantId);
+  }
+
+  /**
    * GET /admin/claims/search
    *
    * Search claims with full-text search and filtering.
@@ -978,5 +1005,69 @@ export class AdminController {
       ipAddress: req.ip,
     });
     return result;
+  }
+
+  // ── Auth: Token Management ─────────────────────────────────────────
+
+  /**
+   * POST /admin/auth/revoke
+   *
+   * Revoke a JWT token immediately by adding to Redis blacklist.
+   * Token remains blacklisted until its expiry time.
+   */
+  @Post('auth/revoke')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Revoke a JWT token' })
+  async revokeToken(@Body() dto: RevokeTokenDto, @Req() req: AdminRequest) {
+    if (!dto.jti || dto.jti.length === 0) {
+      throw new BadRequestException('jti must be a non-empty string');
+    }
+    if (!Number.isInteger(dto.expiresAt) || dto.expiresAt <= 0) {
+      throw new BadRequestException('expiresAt must be a positive integer (Unix timestamp)');
+    }
+
+    await this.tokenBlacklist.revokeToken(dto.jti, dto.expiresAt);
+
+    const actor = req.adminIdentity?.staffId || req.adminIdentity?.email || 'unknown';
+    await this.auditService.write({
+      actor,
+      action: 'auth_token_revoke',
+      payload: { jti: dto.jti },
+      ipAddress: req.ip,
+    });
+  }
+
+  // ── Support: Ticket Management ─────────────────────────────────────
+
+  /**
+   * GET /admin/support/tickets
+   *
+   * List all support tickets with optional filtering.
+   */
+  @Get('support/tickets')
+  @MinAdminRole('viewer')
+  @ApiOperation({ summary: 'List support tickets' })
+  async listSupportTickets(
+    @Query('limit', new ParseIntPipe({ optional: true })) limit?: number,
+    @Query('offset', new ParseIntPipe({ optional: true })) offset?: number,
+    @Query('assignedTo') assignedTo?: string,
+  ) {
+    return this.supportService.listTickets(limit || 50, offset || 0, assignedTo);
+  }
+
+  /**
+   * PATCH /admin/support/tickets/:id/assign
+   *
+   * Assign a support ticket to a staff member or unassign it.
+   */
+  @Patch('support/tickets/:id/assign')
+  @ApiOperation({ summary: 'Assign support ticket to staff member' })
+  async assignSupportTicket(
+    @Param('id') ticketId: string,
+    @Body() dto: AssignTicketDto,
+    @Req() req: AdminRequest,
+  ) {
+    const actor = req.adminIdentity?.staffId || req.adminIdentity?.email || 'unknown';
+    return this.supportService.assignTicket(ticketId, dto.assignee ?? null, actor, req.ip);
   }
 }

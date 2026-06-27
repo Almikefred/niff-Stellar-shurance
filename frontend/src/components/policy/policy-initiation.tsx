@@ -60,14 +60,20 @@ export function PolicyInitiation({ quoteId: propQuoteId }: PolicyInitiationProps
     handleSubmit,
     formState: { errors, isValid },
     setValue,
+    watch,
   } = useForm<PolicyInitiationData>({
     resolver: zodResolver(PolicyInitiationSchema),
     defaultValues: {
       quoteId,
+      coverageTier: 'Standard',
       walletAddress: '',
+      beneficiaryAddress: '',
       acceptTerms: false,
     }
   })
+
+  const coverageTier = watch('coverageTier')
+  const beneficiaryAddress = watch('beneficiaryAddress')
 
   const steps: Step[] = [
     {
@@ -77,22 +83,28 @@ export function PolicyInitiation({ quoteId: propQuoteId }: PolicyInitiationProps
       status: quote ? 'completed' : currentStep === 0 ? 'active' : 'pending'
     },
     {
+      id: 'tier',
+      title: 'Coverage Tier',
+      description: 'Select your coverage level',
+      status: coverageTier ? 'completed' : currentStep === 1 ? 'active' : quote ? 'pending' : 'pending'
+    },
+    {
       id: 'wallet',
       title: 'Connect Wallet',
       description: 'Connect your Stellar wallet',
-      status: walletConnected ? 'completed' : currentStep === 1 ? 'active' : quote ? 'pending' : 'pending'
+      status: walletConnected ? 'completed' : currentStep === 2 ? 'active' : coverageTier ? 'pending' : 'pending'
     },
     {
       id: 'transaction',
       title: 'Sign Transaction',
       description: 'Sign the policy transaction',
-      status: transaction ? 'completed' : currentStep === 2 ? 'active' : walletConnected ? 'pending' : 'pending'
+      status: transaction ? 'completed' : currentStep === 3 ? 'active' : walletConnected ? 'pending' : 'pending'
     },
     {
       id: 'confirmation',
       title: 'Confirmation',
       description: 'Wait for blockchain confirmation',
-      status: policy ? 'completed' : currentStep === 3 ? 'active' : transaction ? 'pending' : 'pending'
+      status: policy ? 'completed' : currentStep === 4 ? 'active' : transaction ? 'pending' : 'pending'
     }
   ]
 
@@ -133,7 +145,7 @@ export function PolicyInitiation({ quoteId: propQuoteId }: PolicyInitiationProps
       setWalletAddress(mockAddress)
       setWalletConnected(true)
       setValue('walletAddress', mockAddress)
-      setCurrentStep(2)
+      setCurrentStep(3)
       setTxStatus('Wallet connected.')
       toast({
         title: 'Wallet Connected',
@@ -154,7 +166,7 @@ export function PolicyInitiation({ quoteId: propQuoteId }: PolicyInitiationProps
       setTxStatus('Building policy transaction…')
       const transactionData = await PolicyAPI.initiatePolicy(data)
       setTransaction(transactionData)
-      setCurrentStep(3)
+      setCurrentStep(4)
       setTxStatus('Waiting for wallet signature…')
       setTimeout(() => {
         submitTransaction(transactionData)
@@ -237,7 +249,7 @@ export function PolicyInitiation({ quoteId: propQuoteId }: PolicyInitiationProps
                     </div>
                   </div>
                 </div>
-                
+
                 <div className="space-y-2">
                   <Label>Quote Details</Label>
                   <ul className="text-sm text-muted-foreground space-y-1">
@@ -257,7 +269,7 @@ export function PolicyInitiation({ quoteId: propQuoteId }: PolicyInitiationProps
                 </div>
 
                 <Button onClick={() => setCurrentStep(1)} className="w-full">
-                  Continue to Wallet Connection
+                  Continue to Coverage Tier Selection
                 </Button>
               </div>
             ) : (
@@ -271,6 +283,43 @@ export function PolicyInitiation({ quoteId: propQuoteId }: PolicyInitiationProps
         )
 
       case 1:
+        return (
+          <StepContent
+            title="Coverage Tier"
+            description="Select your desired coverage level"
+            isActive={true}
+            isCompleted={false}
+          >
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                {(['Basic', 'Standard', 'Premium'] as const).map((tier) => (
+                  <button
+                    key={tier}
+                    onClick={() => setValue('coverageTier', tier)}
+                    className={`p-4 rounded-lg border-2 transition ${
+                      coverageTier === tier
+                        ? 'border-primary bg-primary/5'
+                        : 'border-muted hover:border-primary/50'
+                    }`}
+                  >
+                    <div className="font-semibold">{tier}</div>
+                    <div className="text-xs text-muted-foreground mt-1">
+                      {tier === 'Basic' && 'Essential coverage'}
+                      {tier === 'Standard' && 'Balanced protection'}
+                      {tier === 'Premium' && 'Maximum coverage'}
+                    </div>
+                  </button>
+                ))}
+              </div>
+
+              <Button onClick={() => setCurrentStep(2)} className="w-full">
+                Continue to Wallet Connection
+              </Button>
+            </div>
+          </StepContent>
+        )
+
+      case 2:
         return (
           <StepContent
             title="Connect Wallet"
@@ -322,7 +371,7 @@ export function PolicyInitiation({ quoteId: propQuoteId }: PolicyInitiationProps
           </StepContent>
         )
 
-      case 2:
+      case 3:
         return (
           <StepContent
             title="Sign Transaction"
@@ -347,6 +396,25 @@ export function PolicyInitiation({ quoteId: propQuoteId }: PolicyInitiationProps
                       {errors.walletAddress.message}
                     </p>
                   )}
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="beneficiaryAddress">Beneficiary Address (Optional)</Label>
+                  <Input
+                    id="beneficiaryAddress"
+                    placeholder="G... (leave empty for payouts to holder)"
+                    {...register('beneficiaryAddress')}
+                    className={errors.beneficiaryAddress ? 'border-destructive' : ''}
+                  />
+                  {errors.beneficiaryAddress && (
+                    <p className="text-sm text-destructive flex items-center gap-1">
+                      <AlertCircle className="h-4 w-4" />
+                      {errors.beneficiaryAddress.message}
+                    </p>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    Specify an alternate address for claim payouts. Defaults to wallet holder if empty.
+                  </p>
                 </div>
 
                 <div className="space-y-2">
@@ -376,13 +444,19 @@ export function PolicyInitiation({ quoteId: propQuoteId }: PolicyInitiationProps
                       <span>Premium:</span>
                       <span className="font-semibold">{quote ? fmt(quote.premiumStroops) : '0'} {tokenSymbol}</span>
                     </div>
+                    {quote && (
+                      <div className="flex justify-between text-muted-foreground">
+                        <span>Protocol Fee ({((quote.protocolFeeBps ?? 500) / 100).toFixed(2)}%):</span>
+                        <span>{fmt(String(BigInt(quote.premiumStroops) * BigInt(quote.protocolFeeBps ?? 500) / BigInt(10000)))} {tokenSymbol}</span>
+                      </div>
+                    )}
                     <div className="flex justify-between">
                       <span>Network Fee:</span>
                       <span className="font-semibold">0.01 {tokenSymbol}</span>
                     </div>
                     <div className="flex justify-between border-t pt-2">
                       <span>Total:</span>
-                      <span className="font-semibold">{quote ? fmt(String(BigInt(quote.premiumStroops) + 10n ** BigInt(tokenDecimals) / 100n)) : '0.01'} {tokenSymbol}</span>
+                      <span className="font-semibold">{quote ? fmt(String(BigInt(quote.premiumStroops) + BigInt(quote.premiumStroops) * BigInt(quote.protocolFeeBps ?? 500) / BigInt(10000) + 10n ** BigInt(tokenDecimals) / 100n)) : '0.01'} {tokenSymbol}</span>
                     </div>
                   </div>
                 </div>
@@ -422,7 +496,7 @@ export function PolicyInitiation({ quoteId: propQuoteId }: PolicyInitiationProps
           </StepContent>
         )
 
-      case 3:
+      case 4:
         return (
           <StepContent
             title="Confirmation"
