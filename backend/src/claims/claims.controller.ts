@@ -157,6 +157,21 @@ export class ClaimsController {
     return this.claimsService.getClaimById(id, walletAddress);
   }
 
+  @Post(':id/evidence/metadata')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Store evidence metadata for a claim' })
+  @ApiResponse({ status: 200, description: 'Metadata stored successfully' })
+  @ApiResponse({ status: 404, description: 'Claim not found' })
+  async storeEvidenceMetadata(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: { cid?: string; url?: string; fileSizeBytes?: number; mimeType?: string }
+  ): Promise<{ success: boolean }> {
+    await this.claimsService.storeEvidenceMetadata(id, dto);
+    return { success: true };
+  }
+
   @Get(':id/evidence/:index')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()

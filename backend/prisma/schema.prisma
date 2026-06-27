@@ -40,6 +40,7 @@ model Claim {
   policy            Policy    @relation(fields: [policyId], references: [id])
   votes             Vote[]
   comments          ClaimComment[]
+  evidenceMetadata  EvidenceMetadata?
 
   @@index([status])
   @@index([severity])
@@ -387,6 +388,22 @@ model ClaimComment {
   @@index([claimId, deletedAt, createdAt])
   @@index([authorAddress, claimId])
   @@map("claim_comments")
+}
+
+model EvidenceMetadata {
+  id              Int       @id @default(autoincrement())
+  claimId         Int       @map("claim_id")
+  cid             String?   /// IPFS Content Identifier
+  url             String?   /// Gateway URL
+  fileSizeBytes   Int?      @map("file_size_bytes")
+  mimeType        String?   @map("mime_type")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  claim           Claim     @relation(fields: [claimId], references: [id], onDelete: Cascade)
+
+  @@unique([claimId])
+  @@index([claimId])
+  @@map("evidence_metadata")
 }
 
 /// Tracks voters registered on-chain via admin governance actions.
