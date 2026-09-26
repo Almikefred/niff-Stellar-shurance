@@ -55,6 +55,8 @@ Copy `frontend/.env.example` → `frontend/.env.local`.
 
 ## Handsoff notes
 
+<!-- handsoff-issue-1489 -->
+- #1489: Backend — Support center: tickets, replies, captcha and FAQ
 <!-- handsoff-issue-1490 -->
 - #1490: Backend — Posts/announcements with sanitization, scheduling and feeds
 <!-- handsoff-issue-1524 -->
