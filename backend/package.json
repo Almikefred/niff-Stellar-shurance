@@ -38,6 +38,8 @@
     "secrets:generate:jwt": "ts-node scripts/generate-jwt-key.ts",
     "ops:replay-indexer": "ts-node scripts/replay-indexer.ts",
     "export-spec": "ts-node -P tsconfig.json scripts/export-spec.ts",
+    "openapi:generate": "ts-node -P tsconfig.json scripts/generate-openapi.ts",
+    "openapi:check": "npm run openapi:generate && git diff --exit-code openapi.json",
     "allowlist:generate": "ts-node scripts/generate-persisted-query-allowlist.ts",
     "allowlist:check": "npm run allowlist:generate && git diff --exit-code src/graphql/persisted-query-allowlist.json"
   },
