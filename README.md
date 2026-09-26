@@ -55,6 +55,8 @@ Copy `frontend/.env.example` → `frontend/.env.local`.
 
 ## Handsoff notes
 
+<!-- handsoff-issue-1490 -->
+- #1490: Backend — Posts/announcements with sanitization, scheduling and feeds
 <!-- handsoff-issue-1524 -->
 - #1524: Frontend — Claim discussion thread
 <!-- handsoff-issue-1528 -->
