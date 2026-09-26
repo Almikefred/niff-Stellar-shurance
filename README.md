@@ -55,5 +55,7 @@ Copy `frontend/.env.example` → `frontend/.env.local`.
 
 ## Handsoff notes
 
+<!-- handsoff-issue-1524 -->
+- #1524: Frontend — Claim discussion thread
 <!-- handsoff-issue-1539 -->
 - #1539: Frontend — Admin content: FAQ and announcements
